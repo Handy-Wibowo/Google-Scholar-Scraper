@@ -66,27 +66,35 @@ def parse_scholar_page(html: str, status_code: int = 200) -> PageParseResult:
 
 
 def classify_scholar_page(html: str, status_code: int = 200) -> ExtractionStatus:
-    text = html.lower()
-
-    if status_code == 429 or _has_rate_limit_signal(text):
+    if status_code == 429:
         return ExtractionStatus.RATE_LIMITED
 
-    if status_code in {401, 403} or _has_blocked_signal(text):
+    if status_code in {401, 403}:
         return ExtractionStatus.BLOCKED
 
     if status_code < 200 or status_code >= 300:
         return ExtractionStatus.NETWORK_ERROR
 
-    if _has_network_error_signal(text):
-        return ExtractionStatus.NETWORK_ERROR
-
     soup = BeautifulSoup(html, "html.parser")
-    results = soup.find_all("div", class_="gs_ri")
-    if results:
+    if soup.find_all("div", class_="gs_ri"):
         return ExtractionStatus.SUCCESS
+
+    text = html.lower()
+
+    if _has_rate_limit_signal(text):
+        return ExtractionStatus.RATE_LIMITED
+
+    if _has_blocked_signal(text):
+        return ExtractionStatus.BLOCKED
+
+    if _is_results_page_shell(soup):
+        return ExtractionStatus.NO_RESULTS
 
     if _has_no_results_signal(text):
         return ExtractionStatus.NO_RESULTS
+
+    if _has_network_error_signal(text):
+        return ExtractionStatus.NETWORK_ERROR
 
     return ExtractionStatus.PARSING_ERROR
 
@@ -115,6 +123,13 @@ def _has_blocked_signal(text: str) -> bool:
     return any(signal in text for signal in signals)
 
 
+def _is_results_page_shell(soup: BeautifulSoup) -> bool:
+    # A real Scholar results page always carries the result-count header, even when it
+    # renders zero entries (small result sets, or Google serving an empty page under load).
+    # Such a page is an empty result page, not a failed request.
+    return soup.find(id="gs_ab_md") is not None
+
+
 def _has_network_error_signal(text: str) -> bool:
     signals = (
         "internal server error",
@@ -136,7 +151,7 @@ def _has_no_results_signal(text: str) -> bool:
 
 def _message_for_status(status: ExtractionStatus) -> str:
     messages = {
-        ExtractionStatus.NO_RESULTS: "Google Scholar returned no results for this query.",
+        ExtractionStatus.NO_RESULTS: "Google Scholar returned a results page with no article entries.",
         ExtractionStatus.RATE_LIMITED: "Google Scholar rate-limited the request.",
         ExtractionStatus.BLOCKED: "Google Scholar returned a block, consent, or challenge page.",
         ExtractionStatus.NETWORK_ERROR: "Google Scholar returned an unsuccessful HTTP response.",

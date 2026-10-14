@@ -236,6 +236,22 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(result.diagnostic, ExtractionStatus.PARSING_ERROR.value)
         self.assertEqual(len(result.articles), 1)
 
+    def test_empty_results_page_after_success_preserves_partial_results(self) -> None:
+        empty_shell = """
+        <html><head><title>Google Scholar</title></head><body>
+        <div id="gs_md_err" style="display:none">The system can&#39;t perform the operation now. Try again later.</div>
+        <div id="gs_ab_md">Page 2 of 7 results (0,06 sec)</div>
+        </body></html>
+        """
+        session = FakeSession([FakeResponse(BASIC_HTML), FakeResponse(empty_shell)])
+        client = ScholarClient(session=session, page_delay_seconds=0, backoff_seconds=0)
+
+        result = scrape_scholar("query", 2, client=client)
+
+        self.assertEqual(result.status, ExtractionStatus.PARTIAL_SUCCESS)
+        self.assertEqual(result.diagnostic, ExtractionStatus.NO_RESULTS.value)
+        self.assertEqual(len(result.articles), 1)
+
     def test_no_retry_for_rate_limit(self) -> None:
         session = FakeSession([FakeResponse(RATE_LIMIT_HTML, 429), FakeResponse(BASIC_HTML)])
         client = ScholarClient(session=session, page_delay_seconds=0, backoff_seconds=0, max_retries=1)

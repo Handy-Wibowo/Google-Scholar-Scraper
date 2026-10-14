@@ -64,6 +64,55 @@ class ParserTests(unittest.TestCase):
 
         self.assertEqual(result.status, ExtractionStatus.PARSING_ERROR)
 
+    def test_results_page_carrying_hidden_error_template_is_still_success(self) -> None:
+        # Live Scholar result pages always embed this hidden modal template, which
+        # used to be substring-matched against the whole document and mask real results.
+        html = (
+            "<html><head><title>Google Scholar</title></head><body>"
+            '<div id="gs_md_err" style="display:none">'
+            "The system can&#39;t perform the operation now. Try again later.</div>"
+            '<div class="gs_r gs_or gs_scl"><div class="gs_ri">'
+            '<h3 class="gs_rt"><a href="https://example.edu/paper">Real result title</a></h3>'
+            '<div class="gs_a">A Author - Journal, 2024</div>'
+            "</div></div></body></html>"
+        )
+
+        result = parse_scholar_page(html)
+
+        self.assertEqual(result.status, ExtractionStatus.SUCCESS)
+        self.assertEqual([article.title for article in result.articles], ["Real result title"])
+
+    def test_empty_results_page_carrying_hidden_error_template_is_no_results(self) -> None:
+        html = (
+            "<html><head><title>Google Scholar</title></head><body>"
+            '<div id="gs_md_err" style="display:none">'
+            "The system can&#39;t perform the operation now. Try again later.</div>"
+            "<div>Your search did not match any articles.</div>"
+            "</body></html>"
+        )
+
+        result = parse_scholar_page(html)
+
+        self.assertEqual(result.status, ExtractionStatus.NO_RESULTS)
+
+    def test_live_style_empty_results_page_is_no_results_not_network_error(self) -> None:
+        # Observed on live pages past the end of a result set, and on pages Google serves
+        # empty under load: HTTP 200, full Scholar shell with the result-count header, zero
+        # gs_ri entries, plus the hidden error template every Scholar page embeds.
+        html = (
+            "<html><head><title>Google Scholar</title></head><body>"
+            '<div id="gs_md_err" style="display:none">'
+            "The system can&#39;t perform the operation now. Try again later.</div>"
+            '<div id="gs_ab_md">Page 2 of 7 results (0,06 sec)</div>'
+            '<div id="gs_res_ccl"><div id="gs_res_ccl_mid"></div></div>'
+            "</body></html>"
+        )
+
+        result = parse_scholar_page(html)
+
+        self.assertEqual(result.status, ExtractionStatus.NO_RESULTS)
+        self.assertEqual(result.articles, [])
+
     def test_google_internal_server_error_page_is_network_error(self) -> None:
         html = """
         <html><head><title>Google Scholar</title></head>
