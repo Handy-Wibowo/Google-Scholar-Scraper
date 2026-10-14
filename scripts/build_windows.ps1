@@ -5,7 +5,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$Version = "2.1.0"
+$Version = "2.2.0"
 $AppDirName = "Google-Scholar-Scraper-v$Version"
 $PortableName = "Google-Scholar-Scraper-v$Version-Portable-Windows-x64.zip"
 $InstallerName = "Google-Scholar-Scraper-v$Version-Setup-Windows-x64.exe"
@@ -16,7 +16,7 @@ $PortablePath = Join-Path $ReleaseDir $PortableName
 $ChecksumPath = Join-Path $ReleaseDir "SHA256SUMS.txt"
 $SpecPath = Join-Path $ProjectRoot "packaging\pyinstaller\GoogleScholarScraper.spec"
 $InstallerScript = Join-Path $ProjectRoot "installer\GoogleScholarScraper.iss"
-$ConstraintsPath = Join-Path $ProjectRoot "constraints\release-2.1.0.txt"
+$ConstraintsPath = Join-Path $ProjectRoot "constraints\release-2.2.0.txt"
 $LicenseCollectorPath = Join-Path $ProjectRoot "scripts\collect_third_party_licenses.py"
 
 function Remove-GeneratedPath {

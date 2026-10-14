@@ -1,6 +1,7 @@
 import time
 from collections.abc import Callable
 from threading import Event
+from urllib.parse import urlencode
 
 import requests
 
@@ -45,17 +46,35 @@ class ScholarClient:
         self.max_retries = max_retries
 
 
-def build_scholar_url(query: str, page: int) -> str:
-    return f"https://scholar.google.com/scholar?start={page*10}&q={query}&hl=en&as_sdt=0,5"
+def validate_year_range(year_from: int | None, year_to: int | None) -> None:
+    for year in (year_from, year_to):
+        if year is not None and (type(year) is not int or not 1000 <= year <= 9999):
+            raise ValueError("Year must be a whole four-digit number (1000–9999).")
+    if year_from is not None and year_to is not None and year_from > year_to:
+        raise ValueError("From year must not be later than To year.")
 
 
-def build_scholar_params(query: str, page: int) -> dict[str, str]:
-    return {
+def build_scholar_url(
+    query: str, page: int, *, year_from: int | None = None, year_to: int | None = None,
+) -> str:
+    return f"{BASE_URL}?{urlencode(build_scholar_params(query, page, year_from=year_from, year_to=year_to))}"
+
+
+def build_scholar_params(
+    query: str, page: int, *, year_from: int | None = None, year_to: int | None = None,
+) -> dict[str, str]:
+    validate_year_range(year_from, year_to)
+    params = {
         "start": str(page * 10),
         "q": query,
         "hl": "en",
         "as_sdt": "0,5",
     }
+    if year_from is not None:
+        params["as_ylo"] = str(year_from)
+    if year_to is not None:
+        params["as_yhi"] = str(year_to)
+    return params
 
 
 def fetch_scholar_page(
@@ -63,14 +82,20 @@ def fetch_scholar_page(
     page: int,
     session: requests.Session | None = None,
     timeout: tuple[int, int] = DEFAULT_TIMEOUT,
+    *,
+    year_from: int | None = None,
+    year_to: int | None = None,
 ) -> requests.Response:
+    params = build_scholar_params(query, page, year_from=year_from, year_to=year_to)
     active_session = session or requests.Session()
     active_session.headers.update(DEFAULT_HEADERS)
-    return active_session.get(BASE_URL, params=build_scholar_params(query, page), timeout=timeout)
+    return active_session.get(BASE_URL, params=params, timeout=timeout)
 
 
-def scrape_scholar_articles(query: str, num_pages: int) -> list[Article]:
-    result = scrape_scholar(query, num_pages)
+def scrape_scholar_articles(
+    query: str, num_pages: int, *, year_from: int | None = None, year_to: int | None = None,
+) -> list[Article]:
+    result = scrape_scholar(query, num_pages, year_from=year_from, year_to=year_to)
     return result.articles
 
 
@@ -81,7 +106,11 @@ def scrape_scholar(
     ranking_enabled: bool = True,
     progress_callback: Callable[[int, int, str], None] | None = None,
     cancel_event: Event | None = None,
+    *,
+    year_from: int | None = None,
+    year_to: int | None = None,
 ) -> ExtractionResult:
+    validate_year_range(year_from, year_to)
     active_client = client or ScholarClient()
     articles: list[Article] = []
     duplicates_removed = 0
@@ -102,7 +131,10 @@ def scrape_scholar(
             )
 
         _emit_progress(progress_callback, page_number, num_pages, "requesting")
-        response_result = _fetch_with_retries(active_client, query, page, cancel_event=cancel_event)
+        response_result = _fetch_with_retries(
+            active_client, query, page, cancel_event=cancel_event,
+            year_from=year_from, year_to=year_to,
+        )
         if isinstance(response_result, ExtractionResult):
             if response_result.status == ExtractionStatus.CANCELLED:
                 return _cancelled_result(
@@ -218,6 +250,9 @@ def _fetch_with_retries(
     query: str,
     page: int,
     cancel_event: Event | None = None,
+    *,
+    year_from: int | None = None,
+    year_to: int | None = None,
 ) -> requests.Response | ExtractionResult:
     attempts = client.max_retries + 1
     last_error = ""
@@ -232,7 +267,10 @@ def _fetch_with_retries(
             )
 
         try:
-            response = fetch_scholar_page(query, page, session=client.session, timeout=client.timeout)
+            response = fetch_scholar_page(
+                query, page, session=client.session, timeout=client.timeout,
+                year_from=year_from, year_to=year_to,
+            )
         except requests.Timeout as exc:
             last_error = exc.__class__.__name__
             if attempt < attempts - 1:

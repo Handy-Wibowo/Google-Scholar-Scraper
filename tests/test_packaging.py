@@ -60,8 +60,8 @@ class PackagingMetadataTests(unittest.TestCase):
     def test_package_version_matches_project_metadata(self) -> None:
         pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
-        self.assertEqual(google_scholar_scraper.__version__, "2.1.0")
-        self.assertIn('version = "2.1.0"', pyproject)
+        self.assertEqual(google_scholar_scraper.__version__, "2.2.0")
+        self.assertIn('version = "2.2.0"', pyproject)
         self.assertIn('requires-python = ">=3.10"', pyproject)
         self.assertIn('"requests>=2.33,<3"', pyproject)
 
@@ -139,7 +139,7 @@ class PackagingMetadataTests(unittest.TestCase):
 
         self.assertIn('entrypoint = src_path / "google_scholar_scraper" / "__main__.py"', spec)
         self.assertIn("console=False", spec)
-        self.assertIn('name="Google-Scholar-Scraper-v2.1.0"', spec)
+        self.assertIn('name="Google-Scholar-Scraper-v2.2.0"', spec)
         self.assertIn("datas=[]", spec)
         self.assertNotIn("distribution_documents", spec)
         self.assertIn('excludes=["tests", *excluded_optional_modules]', spec)
@@ -186,10 +186,10 @@ class PackagingMetadataTests(unittest.TestCase):
     def test_inno_setup_definition_uses_per_user_installer_metadata(self) -> None:
         iss = (PROJECT_ROOT / "installer" / "GoogleScholarScraper.iss").read_text(encoding="utf-8")
 
-        self.assertIn('#define MyAppVersion "2.1.0"', iss)
+        self.assertIn('#define MyAppVersion "2.2.0"', iss)
         self.assertIn('#define MyAppPublisher "Mahdi Navaei"', iss)
         self.assertIn("PrivilegesRequired=lowest", iss)
-        self.assertIn("Google-Scholar-Scraper-v2.1.0-Setup-Windows-x64", iss)
+        self.assertIn("Google-Scholar-Scraper-v2.2.0-Setup-Windows-x64", iss)
 
     def test_release_licensing_notice_and_release_note_files_are_present(self) -> None:
         license_text = (PROJECT_ROOT / "LICENSE").read_text(encoding="utf-8")
@@ -197,7 +197,7 @@ class PackagingMetadataTests(unittest.TestCase):
         commercial = (PROJECT_ROOT / "COMMERCIAL_LICENSE.md").read_text(encoding="utf-8")
         third_party = (PROJECT_ROOT / "THIRD_PARTY_NOTICES.txt").read_text(encoding="utf-8")
         release_notes = (PROJECT_ROOT / "docs" / "RELEASE_NOTES_V2.0.1.md").read_text(encoding="utf-8")
-        current_notes = (PROJECT_ROOT / "docs" / "RELEASE_NOTES_V2.1.0.md").read_text(encoding="utf-8")
+        current_notes = (PROJECT_ROOT / "docs" / "RELEASE_NOTES_V2.2.0.md").read_text(encoding="utf-8")
         changelog = (PROJECT_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
         self.assertIn("PolyForm Noncommercial License 1.0.0", license_text)
@@ -208,11 +208,11 @@ class PackagingMetadataTests(unittest.TestCase):
         self.assertIn("urllib3 2.7.0", third_party)
         self.assertIn("idna 3.15", third_party)
         self.assertIn("Google Scholar Scraper V2.0.1", release_notes)
-        self.assertIn("Google Scholar Scraper V2.1.0", current_notes)
-        self.assertIn("## 2.1.0", changelog)
+        self.assertIn("Google Scholar Scraper V2.2.0", current_notes)
+        self.assertIn("## 2.2.0", changelog)
 
     def test_release_notes_state_the_ranking_and_pdf_caveats(self) -> None:
-        notes = (PROJECT_ROOT / "docs" / "RELEASE_NOTES_V2.1.0.md").read_text(encoding="utf-8")
+        notes = (PROJECT_ROOT / "docs" / "RELEASE_NOTES_V2.2.0.md").read_text(encoding="utf-8")
 
         # The release must not over-promise: no bundled dataset, no automatic
         # ranking feed, no access-control bypass, and no claim that a candidate
@@ -242,24 +242,24 @@ class PackagingMetadataTests(unittest.TestCase):
         self.assertIn("docs/ranking-imports.md", readme)
         self.assertIn("does **not** bundle a ranking dataset", readme)
 
-    def test_docs_do_not_link_to_an_unpublished_v2_1_0_release(self) -> None:
+    def test_docs_do_not_link_to_an_unpublished_v2_2_0_release(self) -> None:
         readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-        notes = (PROJECT_ROOT / "docs" / "RELEASE_NOTES_V2.1.0.md").read_text(encoding="utf-8")
+        notes = (PROJECT_ROOT / "docs" / "RELEASE_NOTES_V2.2.0.md").read_text(encoding="utf-8")
         changelog = (PROJECT_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        # Only a feature-branch push was approved: there is no V2.1.0 release, tag,
+        # Only a feature-branch push was approved: there is no V2.2.0 release, tag,
         # or uploaded binary. Shipping a download button for one would 404 and
         # misrepresent the project state.
         for document in (readme, notes, changelog):
-            self.assertNotIn("releases/download/v2.1.0", document)
-            self.assertNotIn("releases/tag/v2.1.0", document)
+            self.assertNotIn("releases/download/v2.2.0", document)
+            self.assertNotIn("releases/tag/v2.2.0", document)
 
         # The stable release links that do exist must stay, and the preview must be
         # labelled as unpublished with its fork and branch named.
         self.assertIn("releases/tag/v2.0.1", readme)
         self.assertIn("unpublished feature-branch preview", readme)
         self.assertIn("Handy-Wibowo/Google-Scholar-Scraper", readme)
-        self.assertIn("feature/journal-ranks-public-pdfs", readme)
+        self.assertIn("feature/scholar-year-filters", readme)
         self.assertIn("unpublished feature-branch preview", notes)
         self.assertIn("MahdiNavaei/Google-Scholar-Scraper", readme)
 
@@ -278,7 +278,7 @@ class PackagingMetadataTests(unittest.TestCase):
         self.assertIn("Verify packaged executable and distribution compliance", workflow)
         self.assertIn("Installer install-launch-export-uninstall smoke", workflow)
         self.assertIn("unins000.exe", workflow)
-        self.assertIn("constraints/release-2.1.0.txt", workflow)
+        self.assertIn("constraints/release-2.2.0.txt", workflow)
         self.assertIn("third_party_licenses", workflow)
         self.assertIn("actions/upload-artifact@v4", workflow)
         self.assertNotIn("softprops/action-gh-release", workflow)
@@ -295,7 +295,7 @@ class PackagingMetadataTests(unittest.TestCase):
         self.assertIn("Installed distribution ships no ranking import templates.", workflow)
 
     def test_release_constraints_pin_expected_dependency_versions(self) -> None:
-        constraints = (PROJECT_ROOT / "constraints" / "release-2.1.0.txt").read_text(encoding="utf-8")
+        constraints = (PROJECT_ROOT / "constraints" / "release-2.2.0.txt").read_text(encoding="utf-8")
 
         self.assertIn("beautifulsoup4==4.14.3", constraints)
         self.assertIn("requests==2.33.0", constraints)
@@ -308,7 +308,7 @@ class PackagingMetadataTests(unittest.TestCase):
             text = (PROJECT_ROOT / "constraints" / name).read_text(encoding="utf-8")
             return [line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")]
 
-        self.assertEqual(pins("release-2.1.0.txt"), pins("release-2.0.1.txt"))
+        self.assertEqual(pins("release-2.2.0.txt"), pins("release-2.0.1.txt"))
 
 
 if __name__ == "__main__":

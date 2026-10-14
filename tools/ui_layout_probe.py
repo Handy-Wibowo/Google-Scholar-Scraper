@@ -31,9 +31,10 @@ def _child() -> int:
     import tkinter as tk
 
     from google_scholar_scraper.models import Article, ExtractionResult, ExtractionStatus
-    from google_scholar_scraper.ui.tkinter_app import MainWindow
+    from google_scholar_scraper.ui.tkinter_app import MainWindow, SearchRequest
 
     app = MainWindow()
+    app.current_request = SearchRequest("CONTROLLED TEST FIXTURE", 1, True, "", 2018, 2024)
     failures: list[str] = []
     report: dict[str, object] = {}
     try:
@@ -79,6 +80,10 @@ def _child() -> int:
                 ("entry_query", app.entry_query),
                 ("entry_ranking_path", app.entry_ranking_path),
                 ("entry_ranking_year", app.entry_ranking_year),
+                ("combo_year", app.combo_year),
+                ("entry_year_from", app.entry_year_from),
+                ("entry_year_to", app.entry_year_to),
+                ("label_applied_year", app.label_applied_year),
                 ("button_search", app.button_search),
                 ("button_cancel", app.button_cancel),
                 ("button_import", app.button_import),
@@ -110,6 +115,8 @@ def _child() -> int:
                 failures.append(
                     f"{geometry}: ranking path field only {app.entry_ranking_path.winfo_width()}px wide"
                 )
+            if app.label_applied_year.winfo_reqwidth() > app.label_applied_year.winfo_width():
+                failures.append(f"{geometry}: applied year range is clipped")
             notice = app.label_ranking_notice.winfo_reqwidth()
             if notice > app.label_ranking_notice.winfo_width() + 1:
                 failures.append(f"{geometry}: ranking notice needs {notice}px, gets {app.label_ranking_notice.winfo_width()}px")

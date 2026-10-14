@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 import copy
 import queue
@@ -22,7 +23,7 @@ from google_scholar_scraper.models import (
     ExtractionStatus,
 )
 from google_scholar_scraper.pdf_service import check_pdf_availability, download_pdfs
-from google_scholar_scraper.scraper.client import scrape_scholar
+from google_scholar_scraper.scraper.client import scrape_scholar, validate_year_range
 
 
 DEFAULT_EXCEL_FILENAME = "scholar_articles.xlsx"
@@ -63,7 +64,7 @@ OPERATION_HEADINGS = {
     "download": "Downloading selected public PDFs",
 }
 
-NO_RANKING_NOTICE = "No ranking data — import CSV/XLSX."
+NO_RANKING_NOTICE = "No ranks imported."
 
 DETAIL_DISCLAIMER = (
     "Journal labels (SJR quartile, SINTA rank) come from the ranking file you imported. They describe "
@@ -103,6 +104,8 @@ class SearchRequest:
     pages: int
     ranking_enabled: bool
     output_folder: str = ""
+    year_from: int | None = None
+    year_to: int | None = None
 
 
 @dataclass(frozen=True)
@@ -111,7 +114,40 @@ class WorkerMessage:
     payload: object
 
 
-def validate_search_inputs(query: str, pages: str, ranking_enabled: bool, output_folder: str = "") -> SearchRequest:
+def year_filter_options(current_year: int | None = None) -> dict[str, tuple[int | None, int | None]]:
+    year = current_year if current_year is not None else date.today().year
+    return {
+        "Any time": (None, None),
+        f"Since {year}": (year, None),
+        f"Since {year - 1}": (year - 1, None),
+        "Last five years": (year - 4, None),
+        "Custom range": (None, None),
+    }
+
+
+def year_range_label(year_from: int | None, year_to: int | None) -> str:
+    if year_from is not None and year_to is not None:
+        return f"Years: {year_from}–{year_to}"
+    if year_from is not None:
+        return f"Years: since {year_from}"
+    if year_to is not None:
+        return f"Years: through {year_to}"
+    return "Years: any time"
+
+
+def _parse_search_year(value: str) -> int | None:
+    text = value.strip()
+    if not text:
+        return None
+    if len(text) != 4 or any(char not in "0123456789" for char in text):
+        raise ValueError("Year must be a whole four-digit number (1000–9999).")
+    return int(text)
+
+
+def validate_search_inputs(
+    query: str, pages: str, ranking_enabled: bool, output_folder: str = "", *,
+    year_from: str = "", year_to: str = "",
+) -> SearchRequest:
     clean_query = query.strip()
     if not clean_query:
         raise ValueError("Enter a search query.")
@@ -124,11 +160,15 @@ def validate_search_inputs(query: str, pages: str, ranking_enabled: bool, output
     if page_count <= 0:
         raise ValueError("Page count must be greater than zero.")
 
+    lower, upper = _parse_search_year(year_from), _parse_search_year(year_to)
+    validate_year_range(lower, upper)
     return SearchRequest(
         query=clean_query,
         pages=page_count,
         ranking_enabled=ranking_enabled,
         output_folder=output_folder.strip(),
+        year_from=lower,
+        year_to=upper,
     )
 
 
@@ -365,12 +405,18 @@ class SearchWorker(threading.Thread):
 
     def run(self) -> None:
         try:
+            year_bounds = {}
+            if self.request.year_from is not None:
+                year_bounds["year_from"] = self.request.year_from
+            if self.request.year_to is not None:
+                year_bounds["year_to"] = self.request.year_to
             result = self.scrape_func(
                 self.request.query,
                 self.request.pages,
                 ranking_enabled=self.request.ranking_enabled,
                 progress_callback=self._progress,
                 cancel_event=self.cancel_event,
+                **year_bounds,
             )
         except Exception as exc:  # defensive UI boundary: do not surface tracebacks in normal UI
             result = ExtractionResult(
@@ -455,6 +501,10 @@ class MainWindow:
         self.pages_var = tk.StringVar(value="1")
         self.output_folder_var = tk.StringVar()
         self.ranking_var = tk.BooleanVar(value=True)
+        self.year_options = year_filter_options()
+        self.year_preset_var = tk.StringVar(value="Any time")
+        self.year_from_var = tk.StringVar()
+        self.year_to_var = tk.StringVar()
         self.ranking_path_var = tk.StringVar()
         self.ranking_year_var = tk.StringVar()
         self.ranking_notice_var = tk.StringVar(value=NO_RANKING_NOTICE)
@@ -462,6 +512,7 @@ class MainWindow:
         self.status_heading_var = tk.StringVar(value="Ready")
         self.status_var = tk.StringVar(value="Enter a query, choose pages, then start a search.")
         self.summary_var = tk.StringVar(value="No search has run yet.")
+        self.applied_year_var = tk.StringVar(value="Years: any time")
         self.empty_title_var = tk.StringVar(value="No results yet")
         self.empty_detail_var = tk.StringVar(value="Run a search to review Google Scholar results here.")
         self.progress_var = tk.IntVar(value=0)
@@ -636,7 +687,21 @@ class MainWindow:
         self.label_ranking_notice = ttk.Label(
             options_row, textvariable=self.ranking_notice_var, style="SurfaceMuted.TLabel"
         )
-        self.label_ranking_notice.grid(row=0, column=1, sticky="ew")
+        self.label_ranking_notice.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+        year_row = self._surface(options_row)
+        year_row.grid(row=0, column=2, sticky="e")
+        self.combo_year = ttk.Combobox(
+            year_row, textvariable=self.year_preset_var, values=tuple(self.year_options),
+            state="readonly", width=13,
+        )
+        self.combo_year.grid(row=0, column=0, padx=(0, 8))
+        self.combo_year.bind("<<ComboboxSelected>>", self._on_year_preset_changed)
+        ttk.Label(year_row, text="From", style="Surface.TLabel").grid(row=0, column=1, padx=(0, 4))
+        self.entry_year_from = ttk.Entry(year_row, textvariable=self.year_from_var, width=5)
+        self.entry_year_from.grid(row=0, column=2, padx=(0, 8))
+        ttk.Label(year_row, text="To", style="Surface.TLabel").grid(row=0, column=3, padx=(0, 4))
+        self.entry_year_to = ttk.Entry(year_row, textvariable=self.year_to_var, width=5)
+        self.entry_year_to.grid(row=0, column=4)
 
         self.status_frame = self._surface(self.window, border=COLORS["border"])
         self.status_frame.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 6))
@@ -693,6 +758,8 @@ class MainWindow:
         )
         self.combo_filter.grid(row=0, column=1, sticky="w", padx=8)
         self.combo_filter.bind("<<ComboboxSelected>>", self.apply_pdf_filter)
+        self.label_applied_year = ttk.Label(filter_toolbar, textvariable=self.applied_year_var, style="Muted.TLabel")
+        self.label_applied_year.grid(row=0, column=2, sticky="w", padx=8)
         self.button_export_excel = self._button(filter_toolbar, text="Export Excel", command=self.export_excel_results, width=12)
         self.button_export_excel.grid(row=0, column=3, padx=(8, 0))
         self.button_export_csv = self._button(filter_toolbar, text="Export CSV", command=self.export_csv_results, width=12)
@@ -751,6 +818,21 @@ class MainWindow:
         if folder_path:
             self.output_folder_var.set(folder_path)
 
+    def _on_year_preset_changed(self, _event=None) -> None:
+        preset = self.year_preset_var.get()
+        if preset != "Custom range":
+            lower, upper = self.year_options[preset]
+            self.year_from_var.set("" if lower is None else str(lower))
+            self.year_to_var.set("" if upper is None else str(upper))
+        self._update_year_controls()
+
+    def _update_year_controls(self) -> None:
+        busy = self.operation is not None
+        self.combo_year.configure(state=tk.DISABLED if busy else "readonly")
+        editable = not busy and self.year_preset_var.get() == "Custom range"
+        for entry in (self.entry_year_from, self.entry_year_to):
+            entry.configure(state=tk.NORMAL if editable else tk.DISABLED)
+
     def start_search(self) -> None:
         if self._is_running():
             return
@@ -761,12 +843,15 @@ class MainWindow:
                 self.pages_var.get(),
                 self.ranking_var.get(),
                 self.output_folder_var.get(),
+                year_from=self.year_from_var.get(),
+                year_to=self.year_to_var.get(),
             )
         except ValueError as exc:
             self._set_status("Check search setup", str(exc), "error")
             return
 
         self.current_request = request
+        self.applied_year_var.set(year_range_label(request.year_from, request.year_to))
         self.current_articles = []
         self._clear_results()
         self._show_empty_state("Searching", "Results will appear here as soon as the search completes.")
@@ -1008,6 +1093,11 @@ class MainWindow:
             return
 
         self.current_articles = result.articles
+        applied = (
+            year_range_label(self.current_request.year_from, self.current_request.year_to)
+            if self.current_request else "Years: any time"
+        )
+        self.applied_year_var.set(applied)
         self.summary_base = result_summary(result)
         if len(self.catalog):
             # Local, offline labelling from the already-imported records; no network here.
@@ -1195,7 +1285,7 @@ class MainWindow:
 
     def _refresh_ranking_notice(self) -> None:
         self.ranking_notice_var.set(
-            f"{len(self.catalog)} imported ranking records" if len(self.catalog) else NO_RANKING_NOTICE
+            f"{len(self.catalog)} ranking records" if len(self.catalog) else NO_RANKING_NOTICE
         )
 
     def _render_results(self) -> None:
@@ -1377,6 +1467,7 @@ class MainWindow:
         self.button_browse.configure(state=tk.DISABLED)
         self.check_ranking.configure(state=tk.DISABLED)
         self.combo_filter.configure(state=tk.DISABLED)
+        self._update_year_controls()
 
     def _set_idle_state(self) -> None:
         has_articles = bool(self.current_articles)
@@ -1398,6 +1489,7 @@ class MainWindow:
         self.button_browse.configure(state=tk.NORMAL)
         self.check_ranking.configure(state=tk.NORMAL)
         self.combo_filter.configure(state="readonly")
+        self._update_year_controls()
 
     def _set_button_state(self, button, state: str, *, kind: str = "secondary") -> None:
         is_primary = kind == "primary"

@@ -12,10 +12,10 @@ jobs:
     runs-on: windows-latest
 
     env:
-      VERSION: "2.1.0"
-      APP_DIR: Google-Scholar-Scraper-v2.1.0
-      PORTABLE_NAME: Google-Scholar-Scraper-v2.1.0-Portable-Windows-x64.zip
-      INSTALLER_NAME: Google-Scholar-Scraper-v2.1.0-Setup-Windows-x64.exe
+      VERSION: "2.2.0"
+      APP_DIR: Google-Scholar-Scraper-v2.2.0
+      PORTABLE_NAME: Google-Scholar-Scraper-v2.2.0-Portable-Windows-x64.zip
+      INSTALLER_NAME: Google-Scholar-Scraper-v2.2.0-Setup-Windows-x64.exe
 
     steps:
       - name: Check out repository
@@ -29,7 +29,7 @@ jobs:
       - name: Install runtime and build dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -c constraints/release-2.1.0.txt . pyinstaller
+          python -m pip install -c constraints/release-2.2.0.txt . pyinstaller
 
       - name: Compile source and tests
         run: python -m compileall prog.py src tests scripts/collect_third_party_licenses.py
@@ -112,7 +112,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $appDir = "dist\$env:APP_DIR"
           python scripts\collect_third_party_licenses.py `
-            --constraints constraints\release-2.1.0.txt `
+            --constraints constraints\release-2.2.0.txt `
             --app-dir $appDir `
             --output-dir "$appDir\third_party_licenses"
           if ($LASTEXITCODE -ne 0) {
@@ -385,9 +385,9 @@ jobs:
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: google-scholar-scraper-v2.1.0-windows-artifacts
+          name: google-scholar-scraper-v2.2.0-windows-artifacts
           path: |
-            dist/release/Google-Scholar-Scraper-v2.1.0-Portable-Windows-x64.zip
-            dist/installer/Google-Scholar-Scraper-v2.1.0-Setup-Windows-x64.exe
+            dist/release/Google-Scholar-Scraper-v2.2.0-Portable-Windows-x64.zip
+            dist/installer/Google-Scholar-Scraper-v2.2.0-Setup-Windows-x64.exe
             dist/release/SHA256SUMS.txt
           if-no-files-found: error

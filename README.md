@@ -9,23 +9,23 @@ attaching journal ranking and public-PDF metadata, and exporting reviewed result
 to Excel or CSV. It is source-available for noncommercial use under the PolyForm
 Noncommercial License 1.0.0, with separate commercial licensing available.
 
-![Version](https://img.shields.io/badge/version-2.1.0-blue)
+![Version](https://img.shields.io/badge/version-2.2.0-blue)
 ![Latest Release](https://img.shields.io/badge/latest%20release-2.0.1-green)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 [![CI](https://github.com/MahdiNavaei/Google-Scholar-Scraper/actions/workflows/ci.yml/badge.svg)](https://github.com/MahdiNavaei/Google-Scholar-Scraper/actions/workflows/ci.yml)
 [![Windows Build](https://github.com/MahdiNavaei/Google-Scholar-Scraper/actions/workflows/build-windows.yml/badge.svg)](https://github.com/MahdiNavaei/Google-Scholar-Scraper/actions/workflows/build-windows.yml)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-lightgrey)
 
-> **V2.1.0 is an unpublished feature-branch preview.** The version badges above
-> report the source tree, not a shipped build. No V2.1.0 release or tag has been
-> published and no V2.1.0 binary is available for download — you can only run it
+> **V2.2.0 is an unpublished feature-branch preview.** The version badges above
+> report the source tree, not a shipped build. No V2.2.0 release or tag has been
+> published and no V2.2.0 binary is available for download — you can only run it
 > from a source checkout, or from a build you produce locally yourself. The
-> journal-ranking and public-PDF work lives on the feature branch
-> [`feature/journal-ranks-public-pdfs`](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/tree/feature/journal-ranks-public-pdfs)
+> year-filter, journal-ranking, and public-PDF work lives on the feature branch
+> [`feature/scholar-year-filters`](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/tree/feature/scholar-year-filters)
 > of the fork [Handy-Wibowo/Google-Scholar-Scraper](https://github.com/Handy-Wibowo/Google-Scholar-Scraper).
 > The newest published release is still **V2.0.1** from the upstream repository —
 > use the links under [Installation Options](#installation-options) for that, or
-> [build V2.1.0 from source](#building-windows-artifacts) yourself. See
+> [build V2.2.0 from source](#building-windows-artifacts) yourself. See
 > [Release And Documentation](#release-and-documentation) for the current status.
 
 ![Google Scholar Scraper V2 desktop interface](docs/assets/google-scholar-scraper-v2.png)
@@ -84,9 +84,25 @@ Ranking does not use:
 - Model downloads.
 - GPU acceleration.
 
+## Publication-Year Filters
+
+Choose **Any time**, **Since the current year**, **Since the previous year**,
+**Last five years**, or **Custom range** before searching. The Since labels are
+generated from the local calendar year; Last five years starts four years before
+that year. For Custom range, enter inclusive four-digit From/To years (1000–9999).
+A blank endpoint is unbounded and two blank endpoints mean Any time. Future years
+are allowed; From must not be later than To.
+
+The range is sent to Google Scholar as `as_ylo`/`as_yhi` on every page and retry.
+It is not a local filter on enriched publication years: articles with unknown
+metadata are retained. The **Years** label beside the PDF filter identifies the
+range applied to the displayed search; changing the setup applies only to the
+next search. Any time remains the default. Scholar blocking and incomplete
+results remain possible; filtering does not prove corpus completeness.
+
 ## Journal Rankings And Public PDFs
 
-V2.1.0 can attach two kinds of extra metadata to each reviewed result: a journal
+V2.2.0 can attach two kinds of extra metadata to each reviewed result: a journal
 ranking label, and the state of a public PDF copy. Both are additive review aids;
 neither changes what was extracted from Google Scholar.
 
@@ -200,10 +216,10 @@ The UI remains responsive while extraction, metadata checks, and downloads run.
 
 ## Installation Options
 
-**No published V2.1.0 binary exists.** The journal-ranking and public-PDF
+**No published V2.2.0 binary exists.** The journal-ranking and public-PDF
 features are on an unpublished feature branch, so this section covers the two
-things you can install today: the published **V2.0.1** release, and **V2.1.0 built
-from source**. Building V2.1.0 locally does produce a portable ZIP and installer,
+things you can install today: the published **V2.0.1** release, and **V2.2.0 built
+from source**. Building V2.2.0 locally does produce a portable ZIP and installer,
 but those are your own local artifacts — they are not published releases, and no
 published checksum file exists for them.
 
@@ -211,20 +227,20 @@ published checksum file exists for them.
 
 The newest published build is V2.0.1 from the upstream repository
 [MahdiNavaei/Google-Scholar-Scraper](https://github.com/MahdiNavaei/Google-Scholar-Scraper).
-It does **not** include the V2.1.0 journal-ranking or public-PDF features.
+It does **not** include the V2.2.0 journal-ranking or public-PDF features.
 
 - [Windows Installer](https://github.com/MahdiNavaei/Google-Scholar-Scraper/releases/download/v2.0.1/Google-Scholar-Scraper-v2.0.1-Setup-Windows-x64.exe)
 - [Portable Windows ZIP](https://github.com/MahdiNavaei/Google-Scholar-Scraper/releases/download/v2.0.1/Google-Scholar-Scraper-v2.0.1-Portable-Windows-x64.zip)
 - [SHA-256 checksums](https://github.com/MahdiNavaei/Google-Scholar-Scraper/releases/download/v2.0.1/SHA256SUMS.txt)
 - [V2.0.1 release page](https://github.com/MahdiNavaei/Google-Scholar-Scraper/releases/tag/v2.0.1)
 
-### Unpublished Preview: V2.1.0 From Source
+### Unpublished Preview: V2.2.0 From Source
 
-V2.1.0 has no published installer and no published portable ZIP. Run it from the
+V2.2.0 has no published installer and no published portable ZIP. Run it from the
 feature branch:
 
 ```powershell
-git clone --branch feature/journal-ranks-public-pdfs https://github.com/Handy-Wibowo/Google-Scholar-Scraper.git
+git clone --branch feature/scholar-year-filters https://github.com/Handy-Wibowo/Google-Scholar-Scraper.git
 cd Google-Scholar-Scraper
 python -m pip install --upgrade pip
 python -m pip install .
@@ -261,7 +277,7 @@ Requirements:
 - Python 3.10 or newer.
 - Tkinter available in the Python installation.
 
-This works for any checkout, including the V2.1.0 feature branch:
+This works for any checkout, including the V2.2.0 feature branch:
 
 ```powershell
 python -m pip install --upgrade pip
@@ -343,7 +359,7 @@ python -m pip install -e .
 Optional build dependency:
 
 ```powershell
-python -m pip install -c constraints\release-2.1.0.txt pyinstaller
+python -m pip install -c constraints\release-2.2.0.txt pyinstaller
 ```
 
 Run the deterministic test suite:
@@ -366,7 +382,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_windows.ps1
 The script removes only known generated outputs (`build/` and `dist/`) before
 building, then creates:
 
-- PyInstaller `onedir` application under `dist/Google-Scholar-Scraper-v2.1.0/`
+- PyInstaller `onedir` application under `dist/Google-Scholar-Scraper-v2.2.0/`
 - Portable ZIP under `dist/release/`
 - `SHA256SUMS.txt`
 
@@ -414,17 +430,17 @@ constraints/              Exact release-build dependency constraints
 docs/                     Release and audit documentation
 ```
 
-`constraints/release-2.1.0.txt` reuses the V2.0.1 runtime and build pins verbatim:
-V2.1.0 adds no dependency and upgrades no version. The V2.0.1 constraints file is
+`constraints/release-2.2.0.txt` reuses the V2.0.1 runtime and build pins verbatim:
+V2.2.0 adds no dependency and upgrades no version. The V2.0.1 constraints file is
 retained unchanged as the historical record for that release.
 
 ## Release And Documentation
 
 Release status:
 
-- **V2.1.0 — unpublished feature-branch preview.** No release, tag, installer, or
+- **V2.2.0 — unpublished feature-branch preview.** No release, tag, installer, or
   portable ZIP has been published for this version. The work lives on
-  [`feature/journal-ranks-public-pdfs`](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/tree/feature/journal-ranks-public-pdfs)
+  [`feature/scholar-year-filters`](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/tree/feature/scholar-year-filters)
   in the fork [Handy-Wibowo/Google-Scholar-Scraper](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
   and the version number identifies the source tree only.
 - **V2.0.1 — newest published release**, from the upstream repository
@@ -433,7 +449,7 @@ Release status:
 
 Documents:
 
-- [V2.1.0 release notes](docs/RELEASE_NOTES_V2.1.0.md) — notes for the unpublished
+- [V2.2.0 release notes](docs/RELEASE_NOTES_V2.2.0.md) — notes for the unpublished
   feature-branch preview, not a published release announcement.
 - [V2.0.1 release notes](docs/RELEASE_NOTES_V2.0.1.md)
 - [V2.0.0 release notes](docs/RELEASE_NOTES_V2.0.0.md)
@@ -493,7 +509,7 @@ work described above is an independent fork feature.
 This preview is developed in the fork
 [Handy-Wibowo/Google-Scholar-Scraper](https://github.com/Handy-Wibowo/Google-Scholar-Scraper)
 on the branch
-[`feature/journal-ranks-public-pdfs`](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/tree/feature/journal-ranks-public-pdfs).
+[`feature/scholar-year-filters`](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/tree/feature/scholar-year-filters).
 Fork changes have not been proposed to, reviewed by, or endorsed by the upstream
 author, and the fork is not the source of any published release.
 

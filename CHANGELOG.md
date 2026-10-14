@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.2.0
+
+Unpublished feature-branch preview on `feature/scholar-year-filters` in the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper).
+No release or tag is published. Local Windows builds are supported.
+
+- Added dynamic publication-year presets and inclusive optional From/To bounds.
+- Forwarded Scholar `as_ylo`/`as_yhi` across pagination and retries; default searches omit both.
+- Validate four-digit years and reversed ranges before starting a search; allow future years.
+- Display the completed search's year range separately from editable setup controls.
+- Preserve unknown article years, local ranking, metadata/PDF workflows and all export columns.
+- Reuse the exact existing dependencies and corrected Tcl/Tk packaging hook.
+- Added offline regressions and native-DPI year-control/layout acceptance checks.
+
 ## 2.1.0
 
 Unpublished feature-branch preview: version `2.1.0` identifies the source tree on

@@ -231,6 +231,13 @@ def state_window() -> MainWindow:
     window.query_var = DummyVar("query")
     window.pages_var = DummyVar("1")
     window.ranking_var = DummyVar(True)
+    window.year_options = tkinter_app.year_filter_options(2030)
+    window.year_preset_var = DummyVar("Any time")
+    window.year_from_var = DummyVar("")
+    window.year_to_var = DummyVar("")
+    window.combo_year = DummyWidget()
+    window.entry_year_from = DummyWidget()
+    window.entry_year_to = DummyWidget()
     window.output_folder_var = DummyVar("")
     window.ranking_path_var = DummyVar("")
     window.ranking_year_var = DummyVar("")
@@ -239,6 +246,7 @@ def state_window() -> MainWindow:
     window.status_var = DummyVar("")
     window.status_heading_var = DummyVar("")
     window.summary_var = DummyVar("")
+    window.applied_year_var = DummyVar("Years: any time")
     window.empty_title_var = DummyVar("")
     window.empty_detail_var = DummyVar("")
     window.progress_var = DummyVar(0)
@@ -945,6 +953,9 @@ class RealTkGeometryTests(unittest.TestCase):
         "button_export_excel",
         "button_import",
         "button_browse",
+        "combo_year",
+        "entry_year_from",
+        "entry_year_to",
         "results_table",
     )
 
@@ -1051,6 +1062,93 @@ class RealTkGeometryTests(unittest.TestCase):
             widget = getattr(self.window, name)
             y = widget.winfo_rooty() - top
             self.assertLessEqual(y + widget.winfo_height(), height, f"{name} clipped in empty state")
+
+
+class YearFilterUITests(unittest.TestCase):
+    def test_dynamic_presets_and_default(self) -> None:
+        self.assertEqual(tkinter_app.year_filter_options(2030), {
+            "Any time": (None, None), "Since 2030": (2030, None),
+            "Since 2029": (2029, None), "Last five years": (2026, None),
+            "Custom range": (None, None),
+        })
+        from datetime import date
+        self.assertIn(f"Since {date.today().year}", tkinter_app.year_filter_options())
+        self.assertEqual(SearchRequest("query", 1, True, "").year_from, None)
+
+    def test_parse_custom_bounds_without_affecting_other_inputs(self) -> None:
+        for lower, upper, expected in (
+            (" 2018 ", "2024", (2018, 2024)), ("2024", "", (2024, None)),
+            ("", "2024", (None, 2024)), ("", "", (None, None)),
+            ("9999", "9999", (9999, 9999)),
+        ):
+            with self.subTest(lower=lower, upper=upper):
+                request = tkinter_app.validate_search_inputs(' "SOMLAP" ', "2", False, " out ", year_from=lower, year_to=upper)
+                self.assertEqual((request.year_from, request.year_to), expected)
+                self.assertEqual((request.query, request.pages, request.ranking_enabled, request.output_folder), ('"SOMLAP"', 2, False, "out"))
+
+    def test_rejects_malformed_reversed_and_out_of_range_years(self) -> None:
+        for lower, upper in (("x", ""), ("2024.0", ""), ("+2024", ""), ("٢٠٢٤", ""), ("999", ""), ("0999", ""), ("", "10000"), ("2025", "2024")):
+            with self.subTest(lower=lower, upper=upper):
+                with self.assertRaises(ValueError):
+                    tkinter_app.validate_search_inputs("query", "1", True, year_from=lower, year_to=upper)
+
+    def test_preset_switch_clears_stale_bounds_and_restores_custom_states(self) -> None:
+        window = state_window()
+        window.year_from_var.set("2018")
+        window.year_to_var.set("2020")
+        window._on_year_preset_changed()
+        self.assertEqual((window.year_from_var.get(), window.year_to_var.get()), ("", ""))
+        self.assertEqual(window.entry_year_from.state, tkinter_app.tk.DISABLED)
+        window.year_preset_var.set("Last five years")
+        window._on_year_preset_changed()
+        self.assertEqual(window.year_from_var.get(), "2026")
+        window.year_preset_var.set("Custom range")
+        window._on_year_preset_changed()
+        self.assertEqual(window.entry_year_from.state, tkinter_app.tk.NORMAL)
+        window._set_running_state()
+        self.assertEqual(window.combo_year.state, tkinter_app.tk.DISABLED)
+        self.assertEqual(window.entry_year_from.state, tkinter_app.tk.DISABLED)
+        window.operation = None
+        window._set_idle_state()
+        self.assertEqual(window.combo_year.state, "readonly")
+        self.assertEqual(window.entry_year_from.state, tkinter_app.tk.NORMAL)
+
+    def test_invalid_year_does_not_start_worker_or_clear_results(self) -> None:
+        window = state_window()
+        window.current_articles = [Article("Existing")]
+        window.year_preset_var.set("Custom range")
+        window.year_from_var.set("invalid")
+        with patch.object(tkinter_app, "SearchWorker") as worker:
+            window.start_search()
+        worker.assert_not_called()
+        self.assertEqual(window.current_articles, [Article("Existing")])
+        self.assertEqual(window.status_heading_var.get(), "Check search setup")
+
+    def test_worker_forwards_immutable_year_snapshot(self) -> None:
+        received = {}
+        def fake_scrape(query, pages, **kwargs):
+            received.update(kwargs)
+            return ExtractionResult(ExtractionStatus.SUCCESS, [])
+        request = SearchRequest("query", 2, False, "", 2018, 2024)
+        messages = queue.Queue()
+        SearchWorker(request, messages, threading.Event(), fake_scrape).run()
+        self.assertEqual((received["year_from"], received["year_to"]), (2018, 2024))
+        self.assertFalse(received["ranking_enabled"])
+        self.assertEqual(messages.get_nowait().kind, "result")
+
+    def test_result_label_uses_completed_request_not_changed_controls(self) -> None:
+        window = state_window()
+        window.current_request = SearchRequest("query", 1, True, "", 2018, 2024)
+        window.year_preset_var.set("Any time")
+        window.year_from_var.set("")
+        window._handle_result(ExtractionResult(ExtractionStatus.SUCCESS, [Article("Paper")], requested_pages=1, successful_pages=1))
+        self.assertEqual(window.applied_year_var.get(), "Years: 2018–2024")
+        self.assertEqual(window.summary_base, result_summary(ExtractionResult(ExtractionStatus.SUCCESS, [Article("Paper")], requested_pages=1, successful_pages=1)))
+
+    def test_labels_for_open_and_unbounded_ranges(self) -> None:
+        self.assertEqual(tkinter_app.year_range_label(None, None), "Years: any time")
+        self.assertEqual(tkinter_app.year_range_label(2024, None), "Years: since 2024")
+        self.assertEqual(tkinter_app.year_range_label(None, 2024), "Years: through 2024")
 
 
 if __name__ == "__main__":

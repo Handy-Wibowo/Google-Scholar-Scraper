@@ -88,5 +88,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="Google-Scholar-Scraper-v2.1.0",
+    name="Google-Scholar-Scraper-v2.2.0",
 )

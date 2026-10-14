@@ -316,5 +316,68 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(len(session.calls), 1)
 
 
+class YearFilterClientTests(unittest.TestCase):
+    def test_any_time_omits_both_bounds(self) -> None:
+        self.assertEqual(build_scholar_params("query", 0), {
+            "start": "0", "q": "query", "hl": "en", "as_sdt": "0,5",
+        })
+
+    def test_closed_open_equal_and_future_ranges(self) -> None:
+        for lower, upper in ((2018, 2024), (2024, None), (None, 2024), (2024, 2024), (9999, 9999), (1000, None)):
+            with self.subTest(lower=lower, upper=upper):
+                params = build_scholar_params("query", 2, year_from=lower, year_to=upper)
+                self.assertEqual(params["start"], "20")
+                self.assertEqual(params.get("as_ylo"), str(lower) if lower is not None else None)
+                self.assertEqual(params.get("as_yhi"), str(upper) if upper is not None else None)
+
+    def test_invalid_years_rejected_before_network(self) -> None:
+        for lower, upper in ((2025, 2020), (999, None), (None, 10000), (True, None), (2020.0, None), ("2020", None)):
+            with self.subTest(lower=lower, upper=upper):
+                session = FakeSession([])
+                with self.assertRaises(ValueError):
+                    scrape_scholar("query", 1, client=ScholarClient(session=session), year_from=lower, year_to=upper)
+                self.assertEqual(session.calls, [])
+
+    def test_url_encoding_matches_parameter_builder(self) -> None:
+        from urllib.parse import parse_qs, urlsplit
+        from google_scholar_scraper.scraper.client import build_scholar_url
+        query = '"SOMLAP" & C++ / café?'
+        params = build_scholar_params(query, 1, year_from=2018, year_to=2024)
+        url = build_scholar_url(query, 1, year_from=2018, year_to=2024)
+        self.assertEqual(parse_qs(urlsplit(url).query), {key: [value] for key, value in params.items()})
+
+    def test_bounds_survive_timeouts_server_retries_and_pagination(self) -> None:
+        session = FakeSession([
+            requests.Timeout("temporary"), FakeResponse(BASIC_HTML),
+            FakeResponse("temporary", 503), FakeResponse(DUPLICATE_HTML),
+        ])
+        client = ScholarClient(session=session, max_retries=1, page_delay_seconds=0, backoff_seconds=0)
+        result = scrape_scholar("query", 2, client=client, year_from=2018, year_to=2024)
+        self.assertEqual(result.status, ExtractionStatus.SUCCESS)
+        self.assertEqual(result.successful_pages, 2)
+        self.assertEqual([call["params"]["start"] for call in session.calls], ["0", "0", "10", "10"])
+        for call in session.calls:
+            self.assertEqual(call["params"]["as_ylo"], "2018")
+            self.assertEqual(call["params"]["as_yhi"], "2024")
+
+    def test_partial_results_retained_with_bounds(self) -> None:
+        session = FakeSession([FakeResponse(BASIC_HTML), FakeResponse(RATE_LIMIT_HTML, 429)])
+        result = scrape_scholar("query", 2, client=ScholarClient(session=session, page_delay_seconds=0), year_from=2024)
+        self.assertEqual(result.status, ExtractionStatus.PARTIAL_SUCCESS)
+        self.assertEqual(len(result.articles), 1)
+        self.assertEqual(result.successful_pages, 1)
+        self.assertTrue(all(call["params"]["as_ylo"] == "2024" for call in session.calls))
+
+    def test_cancellation_retains_first_page_with_bounds(self) -> None:
+        session = FakeSession([FakeResponse(BASIC_HTML)])
+        result = scrape_scholar(
+            "query", 2, client=ScholarClient(session=session, page_delay_seconds=1),
+            cancel_event=CancellingWait(), year_to=2024,
+        )
+        self.assertEqual(result.status, ExtractionStatus.CANCELLED)
+        self.assertEqual(len(result.articles), 1)
+        self.assertEqual(session.calls[0]["params"]["as_yhi"], "2024")
+
+
 if __name__ == "__main__":
     unittest.main()
