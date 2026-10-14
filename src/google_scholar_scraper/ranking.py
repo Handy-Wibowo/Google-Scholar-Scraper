@@ -1,5 +1,6 @@
 from collections import Counter
 from collections.abc import Iterable
+from dataclasses import replace
 import math
 import re
 import unicodedata
@@ -32,12 +33,7 @@ def score_articles(query: str, articles: Iterable[Article]) -> list[Article]:
 
     scores = _score_tokenized_documents(query_tokens, document_tokens)
     return [
-        Article(
-            title=article.title,
-            authors=article.authors,
-            link=article.link,
-            relevance_score=score,
-        )
+        replace(article, relevance_score=score)
         for article, score in zip(article_list, scores)
     ]
 

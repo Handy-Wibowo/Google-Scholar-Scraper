@@ -137,6 +137,12 @@ def copy_python_license(output_root: Path) -> list[str]:
     raise RuntimeError("Could not locate the Python runtime license in the active release-build interpreter.")
 
 
+def _tcl_candidate_dirs(internal_dir: Path, pattern: str) -> list[Path]:
+    if not internal_dir.is_dir():
+        return []
+    return [path for path in internal_dir.glob(pattern) if path.is_dir()]
+
+
 def copy_tcl_tk_licenses(app_dir: Path, output_root: Path) -> list[str]:
     internal_dir = app_dir / "_internal"
     candidates = sorted(
@@ -146,7 +152,28 @@ def copy_tcl_tk_licenses(app_dir: Path, output_root: Path) -> list[str]:
         }
     )
     if not candidates:
-        raise RuntimeError("Could not locate Tcl/Tk license.terms in the packaged application.")
+        raised = sorted(
+            {
+                *_tcl_candidate_dirs(internal_dir, "tcl9*"),
+                *_tcl_candidate_dirs(internal_dir, "tk9*"),
+                *_tcl_candidate_dirs(internal_dir, "tcl8*"),
+                *_tcl_candidate_dirs(internal_dir, "tk8*"),
+            }
+        )
+        candidates = [path for path in raised if path.is_file()]
+    if not candidates:
+        candidates = sorted(
+            {
+                path
+                for base in (Path(sys.base_prefix) / "tcl", Path(sys.prefix) / "tcl")
+                for path in base.glob("*/demos/license.terms")
+            }
+        )
+    if not candidates:
+        raise RuntimeError(
+            "Could not locate Tcl/Tk license.terms in the packaged application or the "
+            "release-build interpreter's tcl directory."
+        )
 
     destination = output_root / "tcl-tk"
     destination.mkdir(parents=True, exist_ok=True)
@@ -160,6 +187,14 @@ def copy_tcl_tk_licenses(app_dir: Path, output_root: Path) -> list[str]:
     return copied
 
 
+def read_app_version() -> str:
+    version_file = Path(__file__).resolve().parents[1] / "src" / "google_scholar_scraper" / "__init__.py"
+    match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', version_file.read_text(encoding="utf-8"), re.MULTILINE)
+    if not match:
+        raise RuntimeError(f"Could not read __version__ from: {version_file}")
+    return match.group(1)
+
+
 def write_manifest(
     output_root: Path,
     collected: list[tuple[str, str, list[str]]],
@@ -167,7 +202,7 @@ def write_manifest(
     tcl_tk_files: list[str],
 ) -> None:
     lines = [
-        "Google Scholar Scraper V2.0.1 third-party license bundle",
+        f"Google Scholar Scraper V{read_app_version()} third-party license bundle",
         "",
         "This directory was assembled from the exact constrained release-build environment.",
         "Each listed file is copied from the installed distribution metadata or packaged runtime.",

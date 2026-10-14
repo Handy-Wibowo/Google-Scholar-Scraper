@@ -5,7 +5,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$Version = "2.0.1"
+$Version = "2.1.0"
 $AppDirName = "Google-Scholar-Scraper-v$Version"
 $PortableName = "Google-Scholar-Scraper-v$Version-Portable-Windows-x64.zip"
 $InstallerName = "Google-Scholar-Scraper-v$Version-Setup-Windows-x64.exe"
@@ -16,7 +16,7 @@ $PortablePath = Join-Path $ReleaseDir $PortableName
 $ChecksumPath = Join-Path $ReleaseDir "SHA256SUMS.txt"
 $SpecPath = Join-Path $ProjectRoot "packaging\pyinstaller\GoogleScholarScraper.spec"
 $InstallerScript = Join-Path $ProjectRoot "installer\GoogleScholarScraper.iss"
-$ConstraintsPath = Join-Path $ProjectRoot "constraints\release-2.0.1.txt"
+$ConstraintsPath = Join-Path $ProjectRoot "constraints\release-2.1.0.txt"
 $LicenseCollectorPath = Join-Path $ProjectRoot "scripts\collect_third_party_licenses.py"
 
 function Remove-GeneratedPath {
@@ -80,6 +80,39 @@ function Copy-DistributionNotices {
     }
 }
 
+function Copy-UserDocumentation {
+    param([Parameter(Mandatory=$true)][string]$AppDir)
+    $readme = Join-Path $ProjectRoot "README.md"
+    if (-not (Test-Path -LiteralPath $readme)) {
+        throw "Required user documentation is missing from source: $readme"
+    }
+    Copy-Item -LiteralPath $readme -Destination (Join-Path $AppDir "README.md") -Force
+
+    $docsSource = Join-Path $ProjectRoot "docs"
+    $docsTarget = Join-Path $AppDir "docs"
+    New-Item -ItemType Directory -Path $docsTarget -Force | Out-Null
+
+    $importGuide = Join-Path $docsSource "ranking-imports.md"
+    if (-not (Test-Path -LiteralPath $importGuide)) {
+        throw "Required ranking import guide is missing from source: $importGuide"
+    }
+    Copy-Item -LiteralPath $importGuide -Destination (Join-Path $docsTarget "ranking-imports.md") -Force
+
+    $templatesSource = Join-Path $docsSource "ranking_templates"
+    $templates = @()
+    if (Test-Path -LiteralPath $templatesSource) {
+        $templates = @(Get-ChildItem -LiteralPath $templatesSource -File -Filter "*.csv")
+    }
+    if ($templates.Count -eq 0) {
+        throw "No header-only ranking CSV templates found in: $templatesSource"
+    }
+    $templatesTarget = Join-Path $docsTarget "ranking_templates"
+    New-Item -ItemType Directory -Path $templatesTarget -Force | Out-Null
+    foreach ($template in $templates) {
+        Copy-Item -LiteralPath $template.FullName -Destination (Join-Path $templatesTarget $template.Name) -Force
+    }
+}
+
 function Remove-OptionalHttp2Metadata {
     param([Parameter(Mandatory=$true)][string]$AppDir)
     $internalDir = Join-Path $AppDir "_internal"
@@ -137,6 +170,17 @@ function Verify-DistributionCompliance {
             throw "Required third-party license bundle entry missing: $path"
         }
     }
+
+    foreach ($relative in @("README.md", "docs\ranking-imports.md")) {
+        $path = Join-Path $AppDir $relative
+        if (-not (Test-Path -LiteralPath $path)) {
+            throw "Required user documentation missing from distribution: $path"
+        }
+    }
+    $templates = @(Get-ChildItem -LiteralPath (Join-Path $AppDir "docs\ranking_templates") -File -Filter "*.csv" -ErrorAction SilentlyContinue)
+    if ($templates.Count -eq 0) {
+        throw "Distribution ships no ranking import templates."
+    }
 }
 
 Set-Location $ProjectRoot
@@ -156,6 +200,7 @@ if (-not (Test-Path -LiteralPath $ExePath)) {
 $AppDir = Join-Path $DistDir $AppDirName
 Remove-OptionalHttp2Metadata $AppDir
 Copy-DistributionNotices $AppDir
+Copy-UserDocumentation $AppDir
 Collect-ThirdPartyLicenses $AppDir
 Verify-DistributionCompliance $AppDir
 

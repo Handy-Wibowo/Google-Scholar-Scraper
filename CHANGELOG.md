@@ -1,5 +1,41 @@
 # Changelog
 
+## 2.1.0
+
+Unpublished feature-branch preview: version `2.1.0` identifies the source tree on
+`feature/journal-ranks-public-pdfs` in the fork
+[Handy-Wibowo/Google-Scholar-Scraper](https://github.com/Handy-Wibowo/Google-Scholar-Scraper).
+No release or tag has been published for it. The newest published release is
+V2.0.1 from the upstream repository
+[MahdiNavaei/Google-Scholar-Scraper](https://github.com/MahdiNavaei/Google-Scholar-Scraper),
+whose attribution is unchanged.
+
+### Added
+
+- SCImago **SJR** and **SINTA** journal ranking metadata, imported from user-supplied CSV or XLSX ranking tables and matched by ISSN before conservative exact normalized journal titles.
+- Journal ranking fields on every article: kind, label, ranking year, category, and source URL, with unmatched records left unknown rather than guessed.
+- Bibliographic identity metadata (DOI, journal, ISSNs, publication year) attached through a `Check metadata / PDFs` action.
+- Public-PDF state per result with exactly three values — `available`, `unavailable`, `unknown`. `unavailable` means the checked sources found no public PDF; errors stay `unknown` and are never reported as absence.
+- PDF status filter and multi-selection download of the selected papers to a chosen folder, with progress reporting and cancellation.
+- New Excel/CSV export columns: `DOI`, `Journal`, `ISSNs`, `Publication Year`, `SJR Quartile`, `SJR Year`, `SJR Category`, `SJR Source`, `SINTA Rank`, `SINTA Year`, `SINTA Source`, `PDF Status`, `PDF URL`, `PDF Source`, `PDF Detail`, `PDF Local Path`.
+- Export column order derived from the article model's own export order, so a model field cannot silently drop out of an export.
+- `README.md`, `docs/ranking-imports.md`, and header-only `docs/ranking_templates/*.csv` templates shipped inside the portable and installer distributions, so a packaged-app user can prepare a ranking import without a source checkout.
+- `docs/RELEASE_NOTES_V2.1.0.md`.
+
+### Changed
+
+- Raised the application version to `2.1.0` in the package `__version__`, project metadata, PyInstaller output directory, Inno Setup definition, Windows build script, and Windows CI workflow.
+- Added `constraints/release-2.1.0.txt`, reusing the V2.0.1 runtime and build pins verbatim. No dependency was added and no version was upgraded; `constraints/release-2.0.1.txt` is retained unchanged.
+- Extended the packaged Excel/CSV smoke fixture to cover the new export columns from an explicitly synthetic record, with no network access, no ranking import, and no PDF download.
+
+### Notes
+
+- No ranking dataset is bundled and no automatic ranking download is offered. No supported, reliable automated SJR or SINTA ranking interface has been verified. Probes from this host returned HTTP 403 from SCImago and from the current SINTA domain `https://sinta.kemdiktisaintek.go.id/`, while the older SINTA domains did not resolve; a separate observation reached SINTA canonical HTML with HTTP 200. The outcomes differ by host, request, and time, and neither result is proof that these services are always blocked or always available.
+- Crossref is used for bibliographic identity only; it does not supply SJR or SINTA labels.
+- Journal ranking labels are journal-level review aids. They are not paper-quality scores, not citation metrics for the paper, and not proof of current Scopus indexing or accreditation.
+- A Scholar `[PDF]` link is a candidate, not proof of a downloadable PDF or of a reuse licence. No paywall, login, CAPTCHA, or access-control bypass is implemented, and full PDF availability is not promised.
+- License, attribution, and legal files are unchanged in this release.
+
 ## 2.0.1
 
 ### Fixed

@@ -31,6 +31,88 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(result.articles[0].authors, "")
         self.assertEqual(result.articles[0].link, "")
 
+    def test_scholar_classification_labels_are_stripped_from_titles(self) -> None:
+        """Real Scholar markup puts `[PDF]`/`[HTML]` spans in the heading, ahead of the title.
+
+        Captured shape (review-scholar-somlap.html):
+        `<h3 class="gs_rt"><span class="gs_ctc"><span class="gs_ct1">[PDF]</span>
+         <span class="gs_ct2">[PDF]</span></span> <a href=...>Real title</a></h3>`
+        Leaving those labels in made the title unmatchable against any bibliographic record.
+        """
+        result = parse_scholar_page(fixture("scholar_results_labels.html"))
+
+        self.assertEqual(
+            result.articles[0].title, "A Machine-Learning-Powered Real-Time SIEM Framework"
+        )
+        self.assertEqual(result.articles[1].title, "The malware detection challenge of accuracy")
+        for article in result.articles:
+            with self.subTest(title=article.title):
+                self.assertFalse(article.title.startswith("["))
+                self.assertNotIn("[PDF]", article.title)
+                self.assertNotIn("[HTML]", article.title)
+                self.assertNotIn("[CITATION]", article.title)
+
+    def test_citation_only_result_drops_only_the_structural_label(self) -> None:
+        result = parse_scholar_page(fixture("scholar_results_labels.html"))
+
+        self.assertEqual(
+            result.articles[2].title, "Citation only result with a Scholar label"
+        )
+        self.assertEqual(result.articles[2].link, "")
+
+    def test_genuine_brackets_and_emphasis_inside_a_title_are_preserved(self) -> None:
+        result = parse_scholar_page(fixture("scholar_results_labels.html"))
+
+        self.assertEqual(
+            result.articles[3].title, "Structural analysis of [RNA] complexes in solution"
+        )
+
+    def test_ui_expander_is_never_mistaken_for_a_pdf_candidate(self) -> None:
+        """`<a class="gs_or_ggsm_exp" href="javascript:void(0)"><span>[PDF]</span></a>` is a control."""
+        result = parse_scholar_page(fixture("scholar_results_labels.html"))
+
+        self.assertEqual(result.articles[0].pdf_url, "https://repo.example.org/machine-learning.pdf")
+        self.assertEqual(result.articles[0].pdf_status, "unknown")
+        for article in result.articles:
+            with self.subTest(title=article.title):
+                self.assertFalse(article.pdf_url.startswith("javascript:"))
+
+    def test_declared_pdf_link_is_captured_but_left_unverified(self) -> None:
+        result = parse_scholar_page(fixture("scholar_results_metadata.html"))
+
+        paper_one = result.articles[0]
+        self.assertEqual(paper_one.pdf_url, "https://repo.example.org/paper-one.pdf")
+        self.assertEqual(paper_one.pdf_status, "unknown")
+        self.assertIn("not verified", paper_one.pdf_detail)
+
+    def test_html_and_unbracketed_labels_are_never_treated_as_pdf(self) -> None:
+        result = parse_scholar_page(fixture("scholar_results_metadata.html"))
+
+        # Paper Two declares only [HTML]; Paper Four has a bare "PDF" with no brackets.
+        self.assertEqual(result.articles[1].pdf_url, "")
+        self.assertEqual(result.articles[3].pdf_url, "")
+
+    def test_explicit_doi_link_is_captured_and_others_are_not(self) -> None:
+        result = parse_scholar_page(fixture("scholar_results_metadata.html"))
+
+        self.assertEqual(result.articles[0].doi, "10.1234/example.2024.001")
+        self.assertEqual(result.articles[1].doi, "")
+
+    def test_publication_year_requires_an_unambiguous_citation_year(self) -> None:
+        result = parse_scholar_page(fixture("scholar_results_metadata.html"))
+
+        self.assertEqual(result.articles[0].publication_year, 2024)
+        self.assertEqual(result.articles[1].publication_year, 2023)
+        # Paper Three's citation spans "2020 - 2022": two years, so neither is claimed.
+        self.assertIsNone(result.articles[2].publication_year)
+
+    def test_journal_is_never_fabricated_from_the_citation_line(self) -> None:
+        result = parse_scholar_page(fixture("scholar_results_metadata.html"))
+
+        for article in result.articles:
+            with self.subTest(title=article.title):
+                self.assertEqual(article.journal, "")
+
     def test_parser_preserves_raw_article_text_for_data_quality_layer(self) -> None:
         result = parse_scholar_page(fixture("scholar_results_duplicates.html"))
 

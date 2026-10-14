@@ -112,5 +112,50 @@ class RelevanceScoringTests(unittest.TestCase):
         self.assertIsNone(ranked[0].relevance_score)
 
 
+    def test_ranking_preserves_every_metadata_field(self) -> None:
+        article = Article(
+            title="Deep learning",
+            authors="Y LeCun - Nature, 2015",
+            link="https://example.edu/a",
+            doi="10.1038/nature14539",
+            journal="Nature",
+            issns=("0028-0836", "1476-4687"),
+            publication_year=2015,
+            sjr_quartile="Q1",
+            sjr_year=2023,
+            sjr_category="Multidisciplinary",
+            sjr_source_url="https://scimagojr.example/nature",
+            sinta_rank="S2",
+            sinta_year=2024,
+            sinta_source_url="https://sinta.example/nature",
+            pdf_url="https://repo.example/a.pdf",
+            pdf_source_url="https://repo.example/a.pdf",
+            pdf_status="available",
+            pdf_detail="verified",
+            pdf_local_path="C:/pdfs/a.pdf",
+        )
+
+        ranked = rank_articles("deep learning", [article])
+
+        scored = ranked[0]
+        self.assertIsNotNone(scored.relevance_score)
+        self.assertEqual(scored.doi, article.doi)
+        self.assertEqual(scored.journal, article.journal)
+        self.assertEqual(scored.issns, article.issns)
+        self.assertEqual(scored.publication_year, 2015)
+        self.assertEqual(scored.sjr_quartile, "Q1")
+        self.assertEqual(scored.sjr_year, 2023)
+        self.assertEqual(scored.sjr_category, "Multidisciplinary")
+        self.assertEqual(scored.sjr_source_url, "https://scimagojr.example/nature")
+        self.assertEqual(scored.sinta_rank, "S2")
+        self.assertEqual(scored.sinta_year, 2024)
+        self.assertEqual(scored.sinta_source_url, "https://sinta.example/nature")
+        self.assertEqual(scored.pdf_url, "https://repo.example/a.pdf")
+        self.assertEqual(scored.pdf_source_url, "https://repo.example/a.pdf")
+        self.assertEqual(scored.pdf_status, "available")
+        self.assertEqual(scored.pdf_detail, "verified")
+        self.assertEqual(scored.pdf_local_path, "C:/pdfs/a.pdf")
+
+
 if __name__ == "__main__":
     unittest.main()

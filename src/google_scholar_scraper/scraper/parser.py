@@ -1,8 +1,29 @@
 from dataclasses import dataclass
+from urllib.parse import urlsplit
+import re
 
 from bs4 import BeautifulSoup
 
-from google_scholar_scraper.models import Article, ExtractionStatus
+from google_scholar_scraper.models import Article, ExtractionStatus, normalize_doi
+
+
+# A DOI only counts when it is carried by an explicit, credible DOI URL. Scholar's
+# citation line is free text, so a bare `10.x/y`-looking token there is not evidence.
+_DOI_URL_RE = re.compile(
+    r"^/(?:doi/)?(?:(?:abs|full|pdf|epdf|meta|abstract)/)*?(10\.\d{4,9}/[^\s?#]+)",
+    re.IGNORECASE,
+)
+_DOI_HOSTS = frozenset({"doi.org", "dx.doi.org", "www.doi.org", "www.dx.doi.org"})
+_YEAR_RE = re.compile(r"\b(1[5-9]\d\d|2[01]\d\d)\b")
+
+# Scholar puts its own resource classification in the heading, ahead of the real title:
+# `<h3 class="gs_rt"><span class="gs_ctc"><span class="gs_ct1">[PDF]</span>
+#  <span class="gs_ct2">[PDF]</span></span> <a>Real title</a></h3>`.
+# Those spans are structural markup, not part of the work's title, so they are dropped.
+# Only these exact classes are removed — bracket text that is genuinely part of a title
+# (a chemical name, "[RNA]", a bracketed subtitle) is left untouched.
+_SCHOLAR_LABEL_CLASSES = frozenset({"gs_ctc", "gs_ctu"})
+_WHITESPACE_RE = re.compile(r"\s+")
 
 
 @dataclass(frozen=True)
@@ -33,7 +54,7 @@ def parse_scholar_page(html: str, status_code: int = 200) -> PageParseResult:
     skipped_missing_title = 0
     for result in results:
         title_node = result.find("h3", class_="gs_rt")
-        title = title_node.get_text(" ", strip=True) if title_node else ""
+        title = _scholar_title(title_node)
         if not title:
             skipped_missing_title += 1
             continue
@@ -43,7 +64,19 @@ def parse_scholar_page(html: str, status_code: int = 200) -> PageParseResult:
 
         link_node = title_node.find("a") if title_node else None
         link = link_node.get("href", "") if link_node else ""
-        articles.append(Article(title=title, authors=authors, link=link))
+
+        wrapper = result.find_parent("div", class_="gs_r") or result
+        candidate_pdf_url = _scholar_pdf_candidate(wrapper)
+        article = Article(
+            title=title,
+            authors=authors,
+            link=link,
+            doi=_first_doi_url(wrapper),
+            publication_year=_conservative_year(authors),
+            pdf_url=candidate_pdf_url,
+            pdf_detail="Candidate link declared by Google Scholar; not verified." if candidate_pdf_url else "",
+        )
+        articles.append(article)
 
     if not articles:
         return PageParseResult(
@@ -63,6 +96,81 @@ def parse_scholar_page(html: str, status_code: int = 200) -> PageParseResult:
         message="Parsed Google Scholar results.",
         diagnostic=diagnostic,
     )
+
+
+def _scholar_title(title_node) -> str:
+    """Return the genuine article title from a Scholar heading.
+
+    The heading can carry Scholar's own classification labels before the title, and those
+    labels are markup, not the work's title — leaving them in produced titles like
+    `[PDF] [PDF] A Machine-Learning ...`, which can never match a bibliographic record.
+
+    Two rules, in order:
+    1. When the heading holds a title anchor, the anchor's own text *is* the title. Scholar
+       puts the label spans outside that anchor, so this needs no removal and cannot damage
+       a title that legitimately contains brackets.
+    2. With no anchor (a citation-only result), only the structural label spans are removed;
+       every other bracket, Unicode character and emphasis inside the heading is kept.
+    """
+    if title_node is None:
+        return ""
+
+    anchor = title_node.find("a")
+    if anchor is not None:
+        text = anchor.get_text(" ", strip=True)
+        if text:
+            return text
+
+    for label in title_node.find_all(class_=lambda value: value in _SCHOLAR_LABEL_CLASSES):
+        label.decompose()
+    return _WHITESPACE_RE.sub(" ", title_node.get_text(" ", strip=True)).strip()
+
+
+def _scholar_pdf_candidate(wrapper) -> str:
+    """Return the URL behind Scholar's own right-column `[PDF]` marker, if present.
+
+    Scholar renders that marker inside the result wrapper (`.gs_or_ggsm`). Only an
+    explicit `[PDF]` label counts: `[HTML]`, `[BOOK]`, `[CITATION]` and other markers
+    are different resource kinds and must never be reported as a PDF candidate.
+
+    The label alone is not enough, because the wrapper also holds a UI expander
+    (`<a class="gs_or_ggsm_exp" href="javascript:void(0)"><span>[PDF]</span></a>`) that is
+    labelled `[PDF]` but points nowhere. Only a real `http(s)` target is a candidate; a
+    `javascript:` or otherwise non-HTTP href is a control, not a document.
+    """
+    for anchor in wrapper.find_all("a", href=True):
+        label = anchor.get_text(" ", strip=True).casefold()
+        if not label.startswith("[pdf]"):
+            continue
+        href = anchor["href"].strip()
+        if urlsplit(href).scheme.casefold() in {"http", "https"}:
+            return href
+    return ""
+
+
+def _first_doi_url(wrapper) -> str:
+    for anchor in wrapper.find_all("a", href=True):
+        doi = _doi_from_url(anchor["href"])
+        if doi:
+            return doi
+    return ""
+
+
+def _doi_from_url(href: str) -> str:
+    parsed = urlsplit(href.strip())
+    if parsed.scheme not in {"http", "https"} or parsed.netloc.casefold() not in _DOI_HOSTS:
+        return ""
+
+    match = _DOI_URL_RE.match(parsed.path.rstrip("/"))
+    return normalize_doi(match.group(1)) if match else ""
+
+
+def _conservative_year(text: str) -> int | None:
+    """Return the publication year only when the Scholar citation line is unambiguous."""
+    years = {int(match) for match in _YEAR_RE.findall(text)}
+    if len(years) != 1:
+        return None
+    return years.pop()
 
 
 def classify_scholar_page(html: str, status_code: int = 200) -> ExtractionStatus:

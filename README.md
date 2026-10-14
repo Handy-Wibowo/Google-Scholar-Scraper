@@ -5,16 +5,28 @@ Scholar search results.
 
 Google Scholar Scraper V2 is a local research utility for collecting Scholar
 result pages, removing duplicates, applying optional lexical relevance ranking,
-and exporting reviewed results to Excel or CSV. It is source-available for
-noncommercial use under the PolyForm Noncommercial License 1.0.0, with separate
-commercial licensing available.
+attaching journal ranking and public-PDF metadata, and exporting reviewed results
+to Excel or CSV. It is source-available for noncommercial use under the PolyForm
+Noncommercial License 1.0.0, with separate commercial licensing available.
 
-![Version](https://img.shields.io/badge/version-2.0.1-blue)
+![Version](https://img.shields.io/badge/version-2.1.0-blue)
 ![Latest Release](https://img.shields.io/badge/latest%20release-2.0.1-green)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 [![CI](https://github.com/MahdiNavaei/Google-Scholar-Scraper/actions/workflows/ci.yml/badge.svg)](https://github.com/MahdiNavaei/Google-Scholar-Scraper/actions/workflows/ci.yml)
 [![Windows Build](https://github.com/MahdiNavaei/Google-Scholar-Scraper/actions/workflows/build-windows.yml/badge.svg)](https://github.com/MahdiNavaei/Google-Scholar-Scraper/actions/workflows/build-windows.yml)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-lightgrey)
+
+> **V2.1.0 is an unpublished feature-branch preview.** The version badges above
+> report the source tree, not a shipped build. No V2.1.0 release or tag has been
+> published and no V2.1.0 binary is available for download — you can only run it
+> from a source checkout, or from a build you produce locally yourself. The
+> journal-ranking and public-PDF work lives on the feature branch
+> [`feature/journal-ranks-public-pdfs`](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/tree/feature/journal-ranks-public-pdfs)
+> of the fork [Handy-Wibowo/Google-Scholar-Scraper](https://github.com/Handy-Wibowo/Google-Scholar-Scraper).
+> The newest published release is still **V2.0.1** from the upstream repository —
+> use the links under [Installation Options](#installation-options) for that, or
+> [build V2.1.0 from source](#building-windows-artifacts) yourself. See
+> [Release And Documentation](#release-and-documentation) for the current status.
 
 ![Google Scholar Scraper V2 desktop interface](docs/assets/google-scholar-scraper-v2.png)
 
@@ -34,9 +46,11 @@ What matters in practice:
 - No API key is required.
 - No LLM or external AI service is used.
 - Smart Relevance Ranking runs locally.
+- Journal ranking tables are imported from files you supply, not bundled or fetched.
+- Public PDF checks report an explicit state instead of guessing.
 - Rate limits, blocked pages, parser errors, and cancellations are explicit.
 - Partial results are preserved when extraction stops early.
-- Reviewed results export to Excel and CSV.
+- Reviewed results export to Excel and CSV, including the ranking and PDF columns.
 - Windows distribution supports both portable and installer-based workflows.
 
 ## Core Features
@@ -45,6 +59,9 @@ What matters in practice:
 - Review collected articles in a responsive Tkinter/ttk desktop table.
 - Open result links directly from the table.
 - Enable or disable local relevance ranking.
+- Import SCImago SJR and SINTA ranking tables from CSV or XLSX files.
+- Attach journal ranking metadata (SJR quartile, SINTA rank) and public-PDF state to results.
+- Filter by public-PDF status and download only the papers you select.
 - Preserve usable partial results when later pages fail or the user cancels.
 - Export reviewed results to Excel or CSV.
 - Run from source, portable Windows ZIP, or Windows installer artifacts.
@@ -66,6 +83,83 @@ Ranking does not use:
 - Embedding services.
 - Model downloads.
 - GPU acceleration.
+
+## Journal Rankings And Public PDFs
+
+V2.1.0 can attach two kinds of extra metadata to each reviewed result: a journal
+ranking label, and the state of a public PDF copy. Both are additive review aids;
+neither changes what was extracted from Google Scholar.
+
+### Importing Ranking Tables
+
+The application does **not** bundle a ranking dataset, and it does not download
+ranking tables for you. You import them yourself:
+
+1. Download the SCImago **SJR** journal ranking export and/or a **SINTA** journal
+   ranking export from their own sites.
+2. Import the file through the ranking import in the app (CSV or XLSX).
+3. Records are matched to results by ISSN first, then by a conservative exact
+   normalized journal title. Nothing is inferred from author names or free text.
+
+Import details, expected columns, and the validation rules are documented in
+[docs/ranking-imports.md](docs/ranking-imports.md).
+
+What the labels mean:
+
+- `SJR Quartile` is the SCImago SJR quartile (`Q1`–`Q4`). It is **not** an
+  official Scopus CiteScore quartile.
+- `SINTA Rank` is the SINTA accreditation rank (`S1`–`S6`).
+- Both are **journal-level labels**. They are not a paper-quality score, not a
+  citation metric for the paper, and not proof of current Scopus indexing or
+  accreditation.
+- The ranking year and category are kept from the imported record, so an old
+  label is never presented as current.
+- An unmatched or missing record stays **unknown**. An absent match is not proof
+  that a journal is unindexed, unaccredited, or low quality.
+
+Live ranking lookups are **not** verified from this application, and no supported,
+reliable automated SJR or SINTA ranking interface has been verified. Probes from
+this host produced **HTTP 403** from the SCImago site and from the current SINTA
+domain `https://sinta.kemdiktisaintek.go.id/` (no redirects followed), while the
+older SINTA domains did not resolve at all. A separate observation reached SINTA
+canonical HTML with HTTP 200, so the outcomes differ by host, request, and time —
+neither result is proof that these services are always blocked or always
+available, and neither makes an automated feed dependable. The approved path is
+the file import above.
+
+### Metadata Lookup
+
+Crossref is used only for conservative bibliographic identity (such as DOI,
+journal title, and ISSNs). Crossref does not supply SJR or SINTA ranking labels.
+
+### Public PDF Status
+
+`[PDF]` links shown by Google Scholar are **candidates**. A candidate link is not
+proof that a downloadable PDF exists, and it is not proof of an open-access or
+reuse licence. Always check the version and licence of a downloaded file against
+its source before redistributing it.
+
+Each result carries one of three PDF states:
+
+| State | Meaning |
+| --- | --- |
+| `available` | A public PDF was found and its bytes were confirmed. |
+| `unavailable` | The checked sources returned no public PDF. |
+| `unknown` | Not checked, or the check failed (provider or transport error). |
+
+`unavailable` means the checked sources found nothing — it is **not** proof that
+no copy exists anywhere. Errors stay `unknown` rather than being reported as
+absence.
+
+This project does **not** bypass paywalls, logins, CAPTCHA challenges, or any
+other access control, and it does not promise that a public PDF exists for every
+paper.
+
+### Selecting And Downloading
+
+Filter the results by public-PDF status, select the papers you want, and download
+only those to a folder you choose. Downloads report progress and can be
+cancelled. Selecting a row never starts a download by itself.
 
 ## Reliability Model
 
@@ -95,31 +189,54 @@ empty result:
 4. Enable or disable `Rank by relevance`.
 5. Click `Search Scholar`.
 6. Review results in the table.
-7. Open individual links as needed.
-8. Export to Excel or CSV.
+7. Import SCImago SJR / SINTA ranking tables to attach journal ranking labels.
+8. Run `Check metadata / PDFs` to attach bibliographic metadata and public-PDF state.
+9. Filter the results by public-PDF status if you only want a subset.
+10. Select the rows you want, then download those public PDFs to a folder.
+11. Open individual links as needed.
+12. Export to Excel or CSV — the export covers the visible, filtered rows.
 
-The UI remains responsive while extraction runs.
+The UI remains responsive while extraction, metadata checks, and downloads run.
 
-## Download V2.0.1
+## Installation Options
+
+**No published V2.1.0 binary exists.** The journal-ranking and public-PDF
+features are on an unpublished feature branch, so this section covers the two
+things you can install today: the published **V2.0.1** release, and **V2.1.0 built
+from source**. Building V2.1.0 locally does produce a portable ZIP and installer,
+but those are your own local artifacts — they are not published releases, and no
+published checksum file exists for them.
+
+### Published Release: V2.0.1
+
+The newest published build is V2.0.1 from the upstream repository
+[MahdiNavaei/Google-Scholar-Scraper](https://github.com/MahdiNavaei/Google-Scholar-Scraper).
+It does **not** include the V2.1.0 journal-ranking or public-PDF features.
 
 - [Windows Installer](https://github.com/MahdiNavaei/Google-Scholar-Scraper/releases/download/v2.0.1/Google-Scholar-Scraper-v2.0.1-Setup-Windows-x64.exe)
 - [Portable Windows ZIP](https://github.com/MahdiNavaei/Google-Scholar-Scraper/releases/download/v2.0.1/Google-Scholar-Scraper-v2.0.1-Portable-Windows-x64.zip)
 - [SHA-256 checksums](https://github.com/MahdiNavaei/Google-Scholar-Scraper/releases/download/v2.0.1/SHA256SUMS.txt)
-- [Full release notes](https://github.com/MahdiNavaei/Google-Scholar-Scraper/releases/tag/v2.0.1)
+- [V2.0.1 release page](https://github.com/MahdiNavaei/Google-Scholar-Scraper/releases/tag/v2.0.1)
 
-## Installation Options
+### Unpublished Preview: V2.1.0 From Source
 
-V2.0.1 is available as a Windows Installer and a Portable Windows ZIP.
-Checksums are published with the release:
+V2.1.0 has no published installer and no published portable ZIP. Run it from the
+feature branch:
 
-- `Google-Scholar-Scraper-v2.0.1-Portable-Windows-x64.zip`
-- `Google-Scholar-Scraper-v2.0.1-Setup-Windows-x64.exe`
-- `SHA256SUMS.txt`
+```powershell
+git clone --branch feature/journal-ranks-public-pdfs https://github.com/Handy-Wibowo/Google-Scholar-Scraper.git
+cd Google-Scholar-Scraper
+python -m pip install --upgrade pip
+python -m pip install .
+python -m google_scholar_scraper
+```
 
-Release page:
-[Google Scholar Scraper V2.0.1](https://github.com/MahdiNavaei/Google-Scholar-Scraper/releases/tag/v2.0.1)
+To produce the portable ZIP and installer yourself, see
+[Building Windows Artifacts](#building-windows-artifacts). Those builds are your
+own local artifacts of this branch; they are not published releases and carry no
+published checksum file.
 
-### Portable Windows ZIP
+### Portable Windows ZIP (V2.0.1)
 
 1. Download the portable ZIP from the V2.0.1 release.
 2. Verify the ZIP against `SHA256SUMS.txt`.
@@ -128,7 +245,7 @@ Release page:
 
 The portable build does not require a source checkout.
 
-### Windows Installer
+### Windows Installer (V2.0.1)
 
 1. Download the installer from the V2.0.1 release.
 2. Verify the installer against `SHA256SUMS.txt`.
@@ -143,6 +260,8 @@ Requirements:
 
 - Python 3.10 or newer.
 - Tkinter available in the Python installation.
+
+This works for any checkout, including the V2.1.0 feature branch:
 
 ```powershell
 python -m pip install --upgrade pip
@@ -163,9 +282,29 @@ Exported columns:
 - `Authors`
 - `Link`
 - `Relevance Score`
+- `DOI`
+- `Journal`
+- `ISSNs`
+- `Publication Year`
+- `SJR Quartile`
+- `SJR Year`
+- `SJR Category`
+- `SJR Source`
+- `SINTA Rank`
+- `SINTA Year`
+- `SINTA Source`
+- `PDF Status`
+- `PDF URL`
+- `PDF Source`
+- `PDF Detail`
+- `PDF Local Path`
+
+The column list is derived from the article model's own export order, so a field
+added to the model cannot silently drop out of an export.
 
 When ranking is disabled, `Relevance Score` is left blank instead of inventing
-a score.
+a score. When a journal or PDF value was never looked up, its cell is left blank
+(or `unknown` for `PDF Status`) instead of being filled with a guess.
 
 ## Google Scholar Limitations
 
@@ -180,11 +319,17 @@ Google Scholar results.
 ## Privacy And Local Processing
 
 - Ranking is performed locally.
+- Ranking table imports are read from local files you choose; no ranking dataset
+  is bundled with the application.
 - Exports are written to the selected local folder.
 - No telemetry or analytics collection is implemented.
 - No external AI service receives query or result data.
 - Normal operation makes HTTP requests to Google Scholar for the query entered
   by the user.
+- When you run `Check metadata / PDFs`, the app additionally contacts Crossref
+  for bibliographic identity and the candidate PDF hosts to validate a public
+  copy. When you start a download, the selected PDFs are fetched from their
+  source hosts. Nothing else is contacted.
 
 ## Development Setup
 
@@ -198,7 +343,7 @@ python -m pip install -e .
 Optional build dependency:
 
 ```powershell
-python -m pip install -c constraints\release-2.0.1.txt pyinstaller
+python -m pip install -c constraints\release-2.1.0.txt pyinstaller
 ```
 
 Run the deterministic test suite:
@@ -221,7 +366,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_windows.ps1
 The script removes only known generated outputs (`build/` and `dist/`) before
 building, then creates:
 
-- PyInstaller `onedir` application under `dist/Google-Scholar-Scraper-v2.0.1/`
+- PyInstaller `onedir` application under `dist/Google-Scholar-Scraper-v2.1.0/`
 - Portable ZIP under `dist/release/`
 - `SHA256SUMS.txt`
 
@@ -235,6 +380,13 @@ Portable and installer distributions include `LICENSE`, `NOTICE`,
 `third_party_licenses/` bundle collected from the exact constrained release-build
 environment.
 
+They also ship the user documentation needed to prepare a ranking import:
+
+- `README.md`
+- `docs/ranking-imports.md`
+- `docs/ranking_templates/*.csv` — header-only CSV templates with no ranking data
+  in them, so you can see the accepted columns and fill in your own records.
+
 ## Project Structure
 
 ```text
@@ -244,6 +396,9 @@ src/google_scholar_scraper/
   dedupe.py               Normalization, validation, duplicate removal
   ranking.py              Local lexical relevance ranking
   exporters.py            CSV and Excel export
+  enrichment.py           Bibliographic metadata and PDF-state attachment
+  journal_catalog.py      Imported SJR/SINTA ranking store and journal matching
+  pdf_service.py          Bounded public-PDF checks and downloads
   scraper/client.py       Request flow, retries, progress, cancellation
   scraper/parser.py       Google Scholar HTML parsing and page classification
   ui/tkinter_app.py       Desktop UI
@@ -259,12 +414,33 @@ constraints/              Exact release-build dependency constraints
 docs/                     Release and audit documentation
 ```
 
+`constraints/release-2.1.0.txt` reuses the V2.0.1 runtime and build pins verbatim:
+V2.1.0 adds no dependency and upgrades no version. The V2.0.1 constraints file is
+retained unchanged as the historical record for that release.
+
 ## Release And Documentation
 
+Release status:
+
+- **V2.1.0 — unpublished feature-branch preview.** No release, tag, installer, or
+  portable ZIP has been published for this version. The work lives on
+  [`feature/journal-ranks-public-pdfs`](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/tree/feature/journal-ranks-public-pdfs)
+  in the fork [Handy-Wibowo/Google-Scholar-Scraper](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+  and the version number identifies the source tree only.
+- **V2.0.1 — newest published release**, from the upstream repository
+  [MahdiNavaei/Google-Scholar-Scraper](https://github.com/MahdiNavaei/Google-Scholar-Scraper).
+- **V2.0.0 — previous published release.**
+
+Documents:
+
+- [V2.1.0 release notes](docs/RELEASE_NOTES_V2.1.0.md) — notes for the unpublished
+  feature-branch preview, not a published release announcement.
 - [V2.0.1 release notes](docs/RELEASE_NOTES_V2.0.1.md)
 - [V2.0.0 release notes](docs/RELEASE_NOTES_V2.0.0.md)
 - [V2.0.0 release verification record](docs/V2_RELEASE_CHECKLIST.md)
 - [Changelog](CHANGELOG.md)
+- [Ranking table import reference](docs/ranking-imports.md)
+- [Journal ranks and public PDFs task book](docs/journal-pdf-taskbook.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.txt)
 - [Third-party license bundle workflow](third_party_licenses/README.md)
 - [PyInstaller spec](packaging/pyinstaller/GoogleScholarScraper.spec)
@@ -307,5 +483,18 @@ policy is intentionally conservative until a licensing and assignment process is
 defined.
 
 ## Attribution
+
+Google Scholar Scraper was created by
+[Mahdi Navaei](https://github.com/MahdiNavaei) and is developed upstream at
+[MahdiNavaei/Google-Scholar-Scraper](https://github.com/MahdiNavaei/Google-Scholar-Scraper).
+The upstream author and project are unchanged; the journal-ranking and public-PDF
+work described above is an independent fork feature.
+
+This preview is developed in the fork
+[Handy-Wibowo/Google-Scholar-Scraper](https://github.com/Handy-Wibowo/Google-Scholar-Scraper)
+on the branch
+[`feature/journal-ranks-public-pdfs`](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/tree/feature/journal-ranks-public-pdfs).
+Fork changes have not been proposed to, reviewed by, or endorsed by the upstream
+author, and the fork is not the source of any published release.
 
 See [NOTICE](NOTICE) for attribution and distribution notice information.
