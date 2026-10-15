@@ -1,10 +1,13 @@
 # Google Scholar Scraper V2.2.0 Release Notes
 
-Status: **unpublished feature-branch preview**. This source version and its local
-builds live on [`feature/scholar-year-filters`](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/tree/feature/scholar-year-filters)
-in the Handy-Wibowo fork. No release tag or downloadable release is published.
-The latest published upstream release remains V2.0.1. Attribution to Mahdi Navaei
-is unchanged; the fork is not endorsed by the upstream author.
+Status: **current normal release** of the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+developed on [`feature/scholar-year-filters`](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/tree/feature/scholar-year-filters)
+and published at the
+[v2.2.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v2.2.0)
+after fresh CI and Windows installer checks pass on the release commit. The
+latest published upstream release remains V2.0.1. Attribution to Mahdi Navaei is
+unchanged; the fork is not endorsed by the upstream author.
 
 ## Added in V2.2.0
 
@@ -40,10 +43,14 @@ paywall, CAPTCHA, or other access-control bypass is provided. Scholar may block,
 rate-limit, or return incomplete results; year filtering does not guarantee
 exhaustive collection.
 
-## Local Windows build
+## Release assets and local builds
 
-Use the pinned `constraints/release-2.2.0.txt` and `scripts/build_windows.ps1`.
-The portable package includes README, ranking-import guidance, header-only
-ranking templates, and license notices. An installer also requires Inno Setup;
-`-SkipInstaller` builds only the portable package. Local builds and checksums are
-not a published GitHub release.
+The published release ships the Windows installer, portable ZIP, and
+`SHA256SUMS.txt` at the
+[v2.2.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v2.2.0).
+To reproduce the artifacts locally, use the pinned `constraints/release-2.2.0.txt`
+and `scripts/build_windows.ps1`. The portable package includes README,
+ranking-import guidance, header-only ranking templates, and license notices. An
+installer also requires Inno Setup; `-SkipInstaller` builds only the portable
+package. A local build is your own artifact; verify published downloads against
+the release's `SHA256SUMS.txt`.

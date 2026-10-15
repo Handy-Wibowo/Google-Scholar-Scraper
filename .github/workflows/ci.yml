@@ -22,7 +22,7 @@ jobs:
       - name: Install project from metadata
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -c constraints/release-2.0.1.txt .
+          python -m pip install -c constraints/release-2.2.0.txt .
 
       - name: Compile source and tests
         run: python -m compileall prog.py src tests
@@ -33,9 +33,15 @@ jobs:
           import google_scholar_scraper
           from google_scholar_scraper.app import main
           from google_scholar_scraper.ui.tkinter_app import MainWindow
-          assert google_scholar_scraper.__version__ == "2.0.1"
+          from importlib.metadata import version as metadata_version
+
           assert callable(main)
           assert MainWindow.__name__ == "MainWindow"
+          installed = metadata_version("google-scholar-scraper")
+          assert google_scholar_scraper.__version__ == installed, (
+              f"runtime __version__ {google_scholar_scraper.__version__!r} != "
+              f"installed metadata {installed!r}"
+          )
 
       - name: Run deterministic tests
         run: python -m unittest discover -s tests

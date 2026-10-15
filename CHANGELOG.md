@@ -2,9 +2,12 @@
 
 ## 2.2.0
 
-Unpublished feature-branch preview on `feature/scholar-year-filters` in the
-[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper).
-No release or tag is published. Local Windows builds are supported.
+Normal release of the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+developed on `feature/scholar-year-filters` and published at the
+[v2.2.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v2.2.0)
+after fresh CI and Windows installer checks pass on the release commit. Windows
+installer, portable ZIP, and `SHA256SUMS.txt` are the release assets.
 
 - Added dynamic publication-year presets and inclusive optional From/To bounds.
 - Forwarded Scholar `as_ylo`/`as_yhi` across pagination and retries; default searches omit both.

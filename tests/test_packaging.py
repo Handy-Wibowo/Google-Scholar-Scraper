@@ -242,30 +242,45 @@ class PackagingMetadataTests(unittest.TestCase):
         self.assertIn("docs/ranking-imports.md", readme)
         self.assertIn("does **not** bundle a ranking dataset", readme)
 
-    def test_docs_do_not_link_to_an_unpublished_v2_2_0_release(self) -> None:
+    def test_docs_link_to_the_intended_v2_2_0_release_and_keep_caveats(self) -> None:
         readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
         notes = (PROJECT_ROOT / "docs" / "RELEASE_NOTES_V2.2.0.md").read_text(encoding="utf-8")
         changelog = (PROJECT_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        # Only a feature-branch push was approved: there is no V2.2.0 release, tag,
-        # or uploaded binary. Shipping a download button for one would 404 and
-        # misrepresent the project state.
-        for document in (readme, notes, changelog):
-            self.assertNotIn("releases/download/v2.2.0", document)
-            self.assertNotIn("releases/tag/v2.2.0", document)
+        # V2.2.0 is the current normal release of the fork: the docs point at the
+        # intended tag and asset URLs that go live once CI and Windows installer
+        # checks pass on the release commit and the release is published. Asserting
+        # these keeps coverage of the intentional release URLs instead of disabling it.
+        tag_url = "https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v2.2.0"
+        installer_url = "https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/download/v2.2.0/Google-Scholar-Scraper-v2.2.0-Setup-Windows-x64.exe"
+        portable_url = "https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/download/v2.2.0/Google-Scholar-Scraper-v2.2.0-Portable-Windows-x64.zip"
+        checksums_url = "https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/download/v2.2.0/SHA256SUMS.txt"
 
-        # The stable release links that do exist must stay, and the preview must be
-        # labelled as unpublished with its fork and branch named.
+        for document in (readme, notes):
+            self.assertIn(tag_url, document)
+        self.assertIn(installer_url, readme)
+        self.assertIn(portable_url, readme)
+        self.assertIn(checksums_url, readme)
+        self.assertIn(tag_url, changelog)
+
+        # The V2.2.0 docs no longer label it an unpublished feature-branch preview.
+        # The historical V2.1.0 changelog entry keeps its own wording unchanged.
+        self.assertNotIn("unpublished feature-branch preview", readme)
+        self.assertNotIn("unpublished feature-branch preview", notes)
+        self.assertNotIn("Unpublished feature-branch preview on", changelog)
+
+        # Upstream V2.0.1 stays the historical published upstream release, with
+        # attribution preserved.
         self.assertIn("releases/tag/v2.0.1", readme)
-        self.assertIn("unpublished feature-branch preview", readme)
-        self.assertIn("Handy-Wibowo/Google-Scholar-Scraper", readme)
-        self.assertIn("feature/scholar-year-filters", readme)
-        self.assertIn("unpublished feature-branch preview", notes)
         self.assertIn("MahdiNavaei/Google-Scholar-Scraper", readme)
-
-        # Upstream attribution must survive the fork labelling.
+        self.assertIn("Handy-Wibowo/Google-Scholar-Scraper", readme)
         self.assertIn("Mahdi Navaei", readme)
         self.assertIn("not been proposed to, reviewed by, or endorsed by the upstream", readme)
+
+        # Release caveats survive the release framing.
+        self.assertIn("does **not** bundle a ranking dataset", readme)
+        self.assertIn("official Scopus CiteScore quartile", readme)
+        self.assertIn("not an official Scopus CiteScore quartile", notes)
 
     def test_windows_workflow_builds_installer_collects_licenses_and_uploads_artifacts_without_release_publish(self) -> None:
         workflow = (PROJECT_ROOT / ".github" / "workflows" / "build-windows.yml").read_text(encoding="utf-8")
