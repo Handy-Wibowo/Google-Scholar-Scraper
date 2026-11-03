@@ -1330,13 +1330,19 @@ class CitationsMenuTests(unittest.TestCase):
         window = MainWindow()
         try:
             menubar = window.menubar
-            # tk.Menu reserves entry 0 for the tearoff on some platforms; find the
-            # File cascade by label instead of a positional index.
-            labels = {
-                index: menubar.entrycget(index, "label")
-                for index in range(0, menubar.index("end") + 1)
-            }
-            file_positions = [i for i, label in labels.items() if label == "File"]
+            # tk.Menu reserves entry 0 for the tearoff on some platforms, and tearoff
+            # entries reject "label" queries. Find the File cascade by label, skipping
+            # entries that don't carry one.
+            end_index = menubar.index("end")
+            file_positions = []
+            for index in range(0, (end_index if end_index is not None else -1) + 1):
+                try:
+                    if menubar.type(index) != "cascade":
+                        continue
+                    if menubar.entrycget(index, "label") == "File":
+                        file_positions.append(index)
+                except tk.TclError:
+                    continue
             self.assertEqual(len(file_positions), 1)
             self.assertEqual(menubar.type(file_positions[0]), "cascade")
             file_menu = window.menu_file
