@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from threading import Event
 from unittest import mock
+from urllib.parse import quote
 
 import requests
 
@@ -24,6 +25,14 @@ from google_scholar_scraper.pdf_service import (
 PUBLIC_HOST = "https://repo.example.org"
 PUBLIC_IP = "93.184.216.34"
 OPENALEX_URL = "https://api.openalex.org/works/doi:10.1000/test"
+
+
+def openalex_title_url(title: str) -> str:
+    return (
+        "https://api.openalex.org/works?filter=title.search:"
+        f"{quote(title, safe='')}"
+        "&per-page=5&select=id,title,open_access,best_oa_location,locations"
+    )
 
 
 def public_resolver(host: str) -> list[str]:
@@ -59,6 +68,17 @@ class FakeResponse:
 
     def close(self) -> None:
         self.closed = True
+
+def routes_with_no_title_match(routes=None, *, title: str = "Paper") -> dict:
+    prepared = dict(routes or {})
+    prepared.setdefault(
+        openalex_title_url(title),
+        FakeResponse(
+            b'{"results": []}', headers={"Content-Type": "application/json"}
+        ),
+    )
+    return prepared
+
 
 
 class FakeSession:
@@ -121,14 +141,15 @@ class PublicUrlValidationTests(unittest.TestCase):
     def test_host_resolving_to_private_address_is_rejected(self) -> None:
         self.assertFalse(is_public_http_url("https://evil.example.org/a.pdf", lambda host: ["10.1.2.3"]))
 
-    def test_unsafe_link_makes_article_unavailable_without_any_request(self) -> None:
-        session = FakeSession()
+    def test_unsafe_link_is_not_fetched_when_title_index_answers(self) -> None:
+        index_url = openalex_title_url("Paper")
+        session = FakeSession(routes_with_no_title_match())
         article = Article(title="Paper", pdf_url="http://127.0.0.1/local.pdf")
 
         result = check_pdf_availability(article, session=session, resolver=public_resolver)
 
         self.assertEqual(result.pdf_status, PDF_UNAVAILABLE)
-        self.assertEqual(session.calls, [])
+        self.assertEqual(session.calls, [index_url])
 
 
 class PdfContentTests(unittest.TestCase):
@@ -146,7 +167,16 @@ class PdfContentTests(unittest.TestCase):
 
     def test_html_page_is_not_available(self) -> None:
         url = f"{PUBLIC_HOST}/a.pdf"
-        session = FakeSession({url: FakeResponse(b"<html><body>login</body></html>", headers={"Content-Type": "text/html"})})
+        session = FakeSession(
+            routes_with_no_title_match(
+                {
+                    url: FakeResponse(
+                        b"<html><body>login</body></html>",
+                        headers={"Content-Type": "text/html"},
+                    )
+                }
+            )
+        )
 
         result = check_pdf_availability(
             Article(title="Paper", pdf_url=url), session=session, resolver=public_resolver
@@ -155,10 +185,83 @@ class PdfContentTests(unittest.TestCase):
         self.assertEqual(result.pdf_status, PDF_UNAVAILABLE)
         self.assertIn("HTML", result.pdf_detail)
 
+    def test_html_challenge_page_stays_unknown(self) -> None:
+        url = f"{PUBLIC_HOST}/challenge.pdf"
+        response = FakeResponse(
+            b"<html><script src='/_fs-ch-/challenge.js'></script></html>",
+            headers={"Content-Type": "text/html; charset=utf-8"},
+        )
+        session = FakeSession({url: response})
+
+        result = check_pdf_availability(
+            Article(title="Paper", pdf_url=url), session=session, resolver=public_resolver
+        )
+
+        self.assertEqual(result.pdf_status, PDF_UNKNOWN)
+        self.assertIn("could not be verified", result.pdf_detail)
+        self.assertNotIn("No public PDF found", result.pdf_detail)
+        self.assertTrue(response.closed)
+
+    def test_html_challenge_preview_honors_cancellation(self) -> None:
+        url = f"{PUBLIC_HOST}/challenge.pdf"
+        cancel_event = Event()
+
+        def chunks():
+            yield b"<html>"
+            cancel_event.set()
+            yield b"_fs-ch-"
+
+        response = FakeResponse(
+            chunks=chunks(), headers={"Content-Type": "text/html"}
+        )
+        session = FakeSession({url: response})
+
+        result = check_pdf_availability(
+            Article(title="Paper", pdf_url=url),
+            session=session,
+            resolver=public_resolver,
+            cancel_event=cancel_event,
+        )
+
+        self.assertEqual(result.pdf_status, PDF_UNKNOWN)
+        self.assertIn("Cancelled", result.pdf_detail)
+        self.assertEqual(session.calls, [url])
+        self.assertTrue(response.closed)
+
+    def test_html_challenge_preview_is_bounded_to_16_kb(self) -> None:
+        url = f"{PUBLIC_HOST}/challenge.pdf"
+
+        class RecordingResponse(FakeResponse):
+            def __init__(self):
+                super().__init__(
+                    body=(b"x" * (16 * 1024)) + b"_fs-ch-",
+                    headers={"Content-Type": "text/html"},
+                )
+                self.requested_chunk_size = 0
+
+            def iter_content(self, chunk_size: int = 65536):
+                self.requested_chunk_size = chunk_size
+                yield self._body
+
+        response = RecordingResponse()
+        session = FakeSession(routes_with_no_title_match({url: response}))
+
+        result = check_pdf_availability(
+            Article(title="Paper", pdf_url=url), session=session, resolver=public_resolver
+        )
+
+        self.assertEqual(result.pdf_status, PDF_UNAVAILABLE)
+        self.assertLessEqual(response.requested_chunk_size, 16 * 1024)
+        self.assertTrue(response.closed)
+
     def test_html_masquerading_as_pdf_header_is_not_available(self) -> None:
         url = f"{PUBLIC_HOST}/a.pdf"
         body = b"%PDF-1.4\n<html><body>Please sign in to download</body></html>"
-        session = FakeSession({url: FakeResponse(body, headers={"Content-Type": "application/pdf"})})
+        session = FakeSession(
+            routes_with_no_title_match(
+                {url: FakeResponse(body, headers={"Content-Type": "application/pdf"})}
+            )
+        )
 
         result = check_pdf_availability(
             Article(title="Paper", pdf_url=url), session=session, resolver=public_resolver
@@ -169,7 +272,16 @@ class PdfContentTests(unittest.TestCase):
 
     def test_pdf_content_type_without_signature_is_not_available(self) -> None:
         url = f"{PUBLIC_HOST}/a.pdf"
-        session = FakeSession({url: FakeResponse(b"not a pdf at all", headers={"Content-Type": "application/pdf"})})
+        session = FakeSession(
+            routes_with_no_title_match(
+                {
+                    url: FakeResponse(
+                        b"not a pdf at all",
+                        headers={"Content-Type": "application/pdf"},
+                    )
+                }
+            )
+        )
 
         result = check_pdf_availability(
             Article(title="Paper", pdf_url=url), session=session, resolver=public_resolver
@@ -180,7 +292,11 @@ class PdfContentTests(unittest.TestCase):
 
     def test_empty_body_is_not_available(self) -> None:
         url = f"{PUBLIC_HOST}/a.pdf"
-        session = FakeSession({url: FakeResponse(b"", headers={"Content-Type": "application/pdf"})})
+        session = FakeSession(
+            routes_with_no_title_match(
+                {url: FakeResponse(b"", headers={"Content-Type": "application/pdf"})}
+            )
+        )
 
         result = check_pdf_availability(
             Article(title="Paper", pdf_url=url), session=session, resolver=public_resolver
@@ -192,7 +308,13 @@ class PdfContentTests(unittest.TestCase):
         # A bare header is not a PDF; availability must not be claimed for it.
         url = f"{PUBLIC_HOST}/a.pdf"
         session = FakeSession(
-            {url: FakeResponse(b"%PDF-1.4", headers={"Content-Type": "application/pdf"})}
+            routes_with_no_title_match(
+                {
+                    url: FakeResponse(
+                        b"%PDF-1.4", headers={"Content-Type": "application/pdf"}
+                    )
+                }
+            )
         )
 
         result = check_pdf_availability(
@@ -205,7 +327,13 @@ class PdfContentTests(unittest.TestCase):
     def test_truncated_header_is_not_available(self) -> None:
         url = f"{PUBLIC_HOST}/a.pdf"
         session = FakeSession(
-            {url: FakeResponse(b"%PDF-", headers={"Content-Type": "application/pdf"})}
+            routes_with_no_title_match(
+                {
+                    url: FakeResponse(
+                        b"%PDF-", headers={"Content-Type": "application/pdf"}
+                    )
+                }
+            )
         )
 
         result = check_pdf_availability(
@@ -309,14 +437,20 @@ class PdfContentTests(unittest.TestCase):
         url = f"{PUBLIC_HOST}/short.pdf"
         body = b"%PDF-1.4\n" + b"x" * (MIN_PDF_BYTES - 10)
 
-        session = FakeSession({url: FakeResponse(body, headers={"Content-Type": "application/pdf"})})
+        session = FakeSession(
+            routes_with_no_title_match(
+                {url: FakeResponse(body, headers={"Content-Type": "application/pdf"})}
+            )
+        )
         checked = check_pdf_availability(
             Article(title="Paper", pdf_url=url), session=session, resolver=public_resolver
         )
 
         with tempfile.TemporaryDirectory() as tmp:
             session2 = FakeSession(
-                {url: FakeResponse(body, headers={"Content-Type": "application/pdf"})}
+                routes_with_no_title_match(
+                    {url: FakeResponse(body, headers={"Content-Type": "application/pdf"})}
+                )
             )
             downloaded = download_pdfs(
                 [Article(title="Paper", pdf_url=url)],
@@ -353,19 +487,37 @@ class RedirectTests(unittest.TestCase):
 
     def test_redirect_to_private_host_is_never_fetched(self) -> None:
         start = f"{PUBLIC_HOST}/start"
-        session = FakeSession({start: FakeResponse(b"", 302, {"Location": "http://10.0.0.1/secret.pdf"})})
+        index_url = openalex_title_url("Paper")
+        session = FakeSession(
+            routes_with_no_title_match(
+                {
+                    start: FakeResponse(
+                        b"", 302, {"Location": "http://10.0.0.1/secret.pdf"}
+                    )
+                }
+            )
+        )
 
         result = check_pdf_availability(
             Article(title="Paper", pdf_url=start), session=session, resolver=public_resolver
         )
 
         self.assertEqual(result.pdf_status, PDF_UNKNOWN)
-        self.assertEqual(session.calls, [start])
+        self.assertEqual(session.calls, [start, index_url])
 
     def test_redirect_to_link_local_metadata_endpoint_is_never_fetched(self) -> None:
         start = f"{PUBLIC_HOST}/start"
+        index_url = openalex_title_url("Paper")
         session = FakeSession(
-            {start: FakeResponse(b"", 302, {"Location": "http://169.254.169.254/latest/meta-data/"})}
+            routes_with_no_title_match(
+                {
+                    start: FakeResponse(
+                        b"",
+                        302,
+                        {"Location": "http://169.254.169.254/latest/meta-data/"},
+                    )
+                }
+            )
         )
 
         result = check_pdf_availability(
@@ -373,7 +525,7 @@ class RedirectTests(unittest.TestCase):
         )
 
         self.assertEqual(result.pdf_status, PDF_UNKNOWN)
-        self.assertEqual(session.calls, [start])
+        self.assertEqual(session.calls, [start, index_url])
 
     def test_redirect_loop_is_bounded(self) -> None:
         url = f"{PUBLIC_HOST}/loop"
@@ -433,7 +585,9 @@ class TransportTests(unittest.TestCase):
         for status in (404, 410):
             with self.subTest(status=status):
                 url = f"{PUBLIC_HOST}/a{status}.pdf"
-                session = FakeSession({url: FakeResponse(b"", status)})
+                session = FakeSession(
+                    routes_with_no_title_match({url: FakeResponse(b"", status)})
+                )
                 result = check_pdf_availability(
                     Article(title="Paper", pdf_url=url), session=session, resolver=public_resolver
                 )
@@ -456,29 +610,43 @@ class TransportTests(unittest.TestCase):
 
 
 class AbsentCandidateTests(unittest.TestCase):
-    def test_record_without_link_or_identifier_is_unknown(self) -> None:
-        # No candidate link and no DOI: nothing was consulted, so no source can
-        # be said to have searched for and failed to find a public PDF.
-        session = FakeSession()
+    def test_record_without_link_or_identifier_uses_title_index(self) -> None:
+        index_url = openalex_title_url("Paper")
+        session = FakeSession(
+            {
+                index_url: FakeResponse(
+                    b'{"results": []}', headers={"Content-Type": "application/json"}
+                )
+            }
+        )
 
-        result = check_pdf_availability(Article(title="Paper"), session=session, resolver=public_resolver)
+        result = check_pdf_availability(
+            Article(title="Paper"), session=session, resolver=public_resolver
+        )
 
-        self.assertEqual(result.pdf_status, PDF_UNKNOWN)
-        self.assertIn("candidate", result.pdf_detail)
-        self.assertEqual(session.calls, [])
+        self.assertEqual(result.pdf_status, PDF_UNAVAILABLE)
+        self.assertEqual(session.calls, [index_url])
 
     def test_missing_link_without_identifier_is_unavailable(self) -> None:
-        # A candidate link *was* consulted and rejected: that is a checked
-        # absence, so the unknown branch must not swallow it.
+        # A direct candidate was rejected and the title index answered with no
+        # exact match, so the checked result remains unavailable.
         url = f"{PUBLIC_HOST}/gone.pdf"
-        session = FakeSession({url: FakeResponse(b"", 404)})
+        index_url = openalex_title_url("Paper")
+        session = FakeSession(
+            {
+                url: FakeResponse(b"", 404),
+                index_url: FakeResponse(
+                    b'{"results": []}', headers={"Content-Type": "application/json"}
+                ),
+            }
+        )
 
         result = check_pdf_availability(
             Article(title="Paper", pdf_url=url), session=session, resolver=public_resolver
         )
 
         self.assertEqual(result.pdf_status, PDF_UNAVAILABLE)
-        self.assertEqual(session.calls, [url])
+        self.assertEqual(session.calls, [url, index_url])
 
     def test_unknown_candidate_is_not_reported_as_unavailable(self) -> None:
         good = f"{PUBLIC_HOST}/a.pdf"
@@ -749,11 +917,16 @@ class DownloadFlowTests(unittest.TestCase):
         missing = f"{PUBLIC_HOST}/missing.pdf"
         broken = f"{PUBLIC_HOST}/broken.pdf"
         session = FakeSession(
-            {
-                good: FakeResponse(pdf_bytes(), headers={"Content-Type": "application/pdf"}),
-                missing: FakeResponse(b"", 404),
-                broken: requests.ConnectionError("boom"),
-            }
+            routes_with_no_title_match(
+                {
+                    good: FakeResponse(
+                        pdf_bytes(), headers={"Content-Type": "application/pdf"}
+                    ),
+                    missing: FakeResponse(b"", 404),
+                    broken: requests.ConnectionError("boom"),
+                },
+                title="Missing",
+            )
         )
         articles = [
             Article(title="Good", pdf_url=good),
@@ -968,6 +1141,165 @@ class DoiDiscoveryTests(unittest.TestCase):
         self.assertEqual(result.pdf_status, PDF_UNKNOWN)
 
 
+class TitleDiscoveryTests(unittest.TestCase):
+    @staticmethod
+    def _work(title: str, pdf_url: str = "", *, work_id: str = "W1") -> dict:
+        return {
+            "id": f"https://openalex.org/{work_id}",
+            "title": title,
+            "open_access": {"is_oa": bool(pdf_url)},
+            "best_oa_location": {
+                "is_oa": bool(pdf_url),
+                "pdf_url": pdf_url,
+            },
+            "locations": [],
+        }
+
+    @staticmethod
+    def _payload(*works: dict) -> bytes:
+        import json
+
+        return json.dumps({"results": list(works)}).encode("utf-8")
+
+    def test_doi_less_title_discovery_finds_exact_match_public_pdf(self) -> None:
+        title = "Multimodal techniques for malware classification using deep learning"
+        index_url = openalex_title_url(title)
+        pdf = f"{PUBLIC_HOST}/title-discovered.pdf"
+        session = FakeSession(
+            {
+                index_url: FakeResponse(
+                    self._payload(self._work(title, pdf)),
+                    headers={"Content-Type": "application/json"},
+                ),
+                pdf: FakeResponse(
+                    pdf_bytes(), headers={"Content-Type": "application/pdf"}
+                ),
+            }
+        )
+
+        result = check_pdf_availability(
+            Article(title=title), session=session, resolver=public_resolver
+        )
+
+        self.assertEqual(result.pdf_status, PDF_AVAILABLE)
+        self.assertEqual(result.pdf_source_url, pdf)
+        self.assertEqual(session.calls, [index_url, pdf])
+
+    def test_zero_exact_title_matches_keeps_prior_outcome(self) -> None:
+        title = "Exact Paper"
+        index_url = openalex_title_url(title)
+        session = FakeSession(
+            {
+                index_url: FakeResponse(
+                    self._payload(self._work("Different Paper")),
+                    headers={"Content-Type": "application/json"},
+                )
+            }
+        )
+
+        result = check_pdf_availability(
+            Article(title=title), session=session, resolver=public_resolver
+        )
+
+        self.assertEqual(result.pdf_status, PDF_UNAVAILABLE)
+        self.assertEqual(session.calls, [index_url])
+
+    def test_ambiguous_exact_title_matches_keep_prior_outcome(self) -> None:
+        title = "Shared Title"
+        direct = f"{PUBLIC_HOST}/gone.pdf"
+        index_url = openalex_title_url(title)
+        session = FakeSession(
+            {
+                direct: FakeResponse(b"", 404),
+                index_url: FakeResponse(
+                    self._payload(
+                        self._work(title, f"{PUBLIC_HOST}/one.pdf", work_id="W1"),
+                        self._work(title, f"{PUBLIC_HOST}/two.pdf", work_id="W2"),
+                    ),
+                    headers={"Content-Type": "application/json"},
+                ),
+            }
+        )
+
+        result = check_pdf_availability(
+            Article(title=title, pdf_url=direct),
+            session=session,
+            resolver=public_resolver,
+        )
+
+        self.assertEqual(result.pdf_status, PDF_UNAVAILABLE)
+        self.assertEqual(session.calls, [direct, index_url])
+
+    def test_unreachable_title_index_upgrades_clean_rejection_to_unknown(self) -> None:
+        title = "Paper"
+        direct = f"{PUBLIC_HOST}/gone.pdf"
+        index_url = openalex_title_url(title)
+        session = FakeSession(
+            {
+                direct: FakeResponse(b"", 404),
+                index_url: requests.ConnectionError("offline"),
+            }
+        )
+
+        result = check_pdf_availability(
+            Article(title=title, pdf_url=direct),
+            session=session,
+            resolver=public_resolver,
+        )
+
+        self.assertEqual(result.pdf_status, PDF_UNKNOWN)
+        self.assertIn("could not be consulted by title", result.pdf_detail)
+        self.assertEqual(session.calls, [direct, index_url])
+
+    def test_available_direct_candidate_skips_unreachable_title_index(self) -> None:
+        title = "Paper"
+        direct = f"{PUBLIC_HOST}/direct.pdf"
+        session = FakeSession(
+            {
+                direct: FakeResponse(
+                    pdf_bytes(), headers={"Content-Type": "application/pdf"}
+                )
+            }
+        )
+
+        result = check_pdf_availability(
+            Article(title=title, pdf_url=direct),
+            session=session,
+            resolver=public_resolver,
+        )
+
+        self.assertEqual(result.pdf_status, PDF_AVAILABLE)
+        self.assertEqual(session.calls, [direct])
+
+    def test_cancellation_during_title_index_read_stops_without_more_requests(self) -> None:
+        title = "Paper"
+        index_url = openalex_title_url(title)
+        cancel_event = Event()
+        body = self._payload(self._work(title, f"{PUBLIC_HOST}/never-requested.pdf"))
+
+        def chunks():
+            yield body[:10]
+            cancel_event.set()
+            yield body[10:]
+
+        response = FakeResponse(
+            chunks=chunks(), headers={"Content-Type": "application/json"}
+        )
+        session = FakeSession({index_url: response})
+
+        result = check_pdf_availability(
+            Article(title=title),
+            session=session,
+            resolver=public_resolver,
+            cancel_event=cancel_event,
+        )
+
+        self.assertEqual(result.pdf_status, PDF_UNKNOWN)
+        self.assertIn("Cancelled", result.pdf_detail)
+        self.assertEqual(session.calls, [index_url])
+        self.assertTrue(response.closed)
+
+
 class SessionOwnershipTests(unittest.TestCase):
     def test_caller_session_is_never_closed(self) -> None:
         url = f"{PUBLIC_HOST}/a.pdf"
@@ -1135,7 +1467,14 @@ class DownloadStreamValidationTests(unittest.TestCase):
     def test_download_rejects_header_only_body_and_cleans_up(self) -> None:
         url = f"{PUBLIC_HOST}/header-only.pdf"
         session = FakeSession(
-            {url: FakeResponse(b"%PDF-1.4", headers={"Content-Type": "application/pdf"})}
+            routes_with_no_title_match(
+                {
+                    url: FakeResponse(
+                        b"%PDF-1.4", headers={"Content-Type": "application/pdf"}
+                    )
+                },
+                title="Header",
+            )
         )
 
         with tempfile.TemporaryDirectory() as tmp:

@@ -193,7 +193,10 @@ def _fitted_window_size(window: tk.Misc, width: int, height: int) -> tuple[int, 
 
 def status_message(result: ExtractionResult) -> str:
     messages = {
-        ExtractionStatus.SUCCESS: result.message or "Search completed successfully.",
+        ExtractionStatus.SUCCESS: (
+            (result.message or "Search completed successfully.")
+            + " Run 'Check metadata / PDFs' to detect which papers have downloadable public PDFs; until then every PDF column shows Unknown."
+        ),
         ExtractionStatus.PARTIAL_SUCCESS: result.message or "Search stopped early. Collected results were preserved.",
         ExtractionStatus.NO_RESULTS: result.message or "No results found.",
         ExtractionStatus.RATE_LIMITED: result.message or "Google Scholar temporarily limited requests.",

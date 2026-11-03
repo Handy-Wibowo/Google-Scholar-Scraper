@@ -35,7 +35,7 @@ from urllib.parse import quote, urlsplit
 
 import requests
 
-from google_scholar_scraper.models import Article
+from google_scholar_scraper.models import Article, normalize_title_key
 
 PDF_AVAILABLE = "available"
 PDF_UNAVAILABLE = "unavailable"
@@ -47,11 +47,16 @@ MAX_REDIRECTS = 5
 CHUNK_SIZE = 64 * 1024
 MIN_PDF_BYTES = 64
 MAX_METADATA_BYTES = 1024 * 1024
+HTML_PREVIEW_BYTES = 16 * 1024
 MAX_NAME_ATTEMPTS = 10000
 
 # Documented, credential-free public endpoint (OpenAlex works API, `doi:` filter).
 # https://docs.openalex.org/api-entities/works/get-a-single-work
 OPENALEX_WORK_URL = "https://api.openalex.org/works/doi:{}"
+OPENALEX_TITLE_SEARCH_URL = (
+    "https://api.openalex.org/works?filter=title.search:{}"
+    "&per-page=5&select=id,title,open_access,best_oa_location,locations"
+)
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -65,6 +70,19 @@ DEFAULT_HEADERS = {
 # 4xx that mean "there is nothing here", as opposed to "we could not check".
 _REJECT_STATUSES = frozenset({400, 404, 405, 406, 410, 451})
 _HTML_MARKERS = (b"<html", b"<!doctype html", b"<head", b"<body")
+_CHALLENGE_MARKERS = (
+    b"_fs-ch-",
+    b"cf-chl",
+    b"cf-browser-verification",
+    b"just a moment",
+    b"checking your browser",
+    b"enable javascript and cookies",
+    b"captcha",
+    b"pardon our interruption",
+    b"attention required",
+    b"ddos-guard",
+    b"verifying you are human",
+)
 # A real PDF starts with a versioned header; "%PDF-" alone is not enough.
 _PDF_SIGNATURE = re.compile(rb"^%PDF-\d+\.\d+")
 
@@ -121,9 +139,10 @@ def check_pdf_availability(
 ) -> Article:
     """Validate public PDF candidates for ``article`` and label ``pdf_status``.
 
-    Direct candidates come from the record itself (``pdf_url``); when a DOI is
-    present, a documented credential-free OA lookup may add candidates. Never
-    marks an HTML/login page as available. Unrelated fields are preserved.
+    Direct candidates come from the record itself (``pdf_url``); a documented,
+    credential-free OA lookup may add candidates by DOI or, when no DOI is
+    present, by an exact normalized-title match. Never marks an HTML/login page
+    as available. Unrelated fields are preserved.
     """
     active = session or _new_session()
     owned = session is None
@@ -263,15 +282,6 @@ def _evaluate(
 ) -> _Outcome:
     direct = _direct_candidates(article)
     doi = (article.doi or "").strip()
-    if not direct and not doi:
-        # Nothing was consulted: the record carries no candidate link and no
-        # identifier, so no source could have been searched. That is an
-        # unchecked record, not a checked absence.
-        return _Outcome(
-            PDF_UNKNOWN,
-            "No PDF candidate link or DOI identifier on this record; no public PDF "
-            "source could be consulted.",
-        )
     outcome = _try_candidates(
         direct,
         session=session,
@@ -286,12 +296,30 @@ def _evaluate(
     if outcome.status == PDF_AVAILABLE or _is_cancelled(cancel_event):
         return outcome
 
-    if not doi:
-        return outcome
-
-    discovered = _discover_oa_candidates(
-        doi, session=session, timeout=timeout, resolver=resolver, cancel_event=cancel_event
-    )
+    if doi:
+        discovery_kind = "DOI"
+        try:
+            discovered = _discover_oa_candidates(
+                doi,
+                session=session,
+                timeout=timeout,
+                resolver=resolver,
+                cancel_event=cancel_event,
+            )
+        except _Cancelled:
+            return _Outcome(PDF_UNKNOWN, "Cancelled while consulting the public PDF index.")
+    else:
+        discovery_kind = "title"
+        try:
+            discovered = _discover_oa_candidates_by_title(
+                article.title,
+                session=session,
+                timeout=timeout,
+                resolver=resolver,
+                cancel_event=cancel_event,
+            )
+        except _Cancelled:
+            return _Outcome(PDF_UNKNOWN, "Cancelled while consulting the public PDF index.")
     if discovered is None:
         # The index could not be consulted, so a clean rejection from the direct
         # candidates is not a complete search result.
@@ -299,7 +327,7 @@ def _evaluate(
             return _Outcome(
                 PDF_UNKNOWN,
                 "No public PDF at the record's own link, and the public PDF index "
-                "could not be consulted.",
+                f"could not be consulted by {discovery_kind}.",
             )
         return outcome
     if not discovered:
@@ -347,7 +375,13 @@ def _try_candidates(
 
         response = None
         try:
-            response = _open_candidate(url, session=session, timeout=timeout, resolver=resolver)
+            response = _open_candidate(
+                url,
+                session=session,
+                timeout=timeout,
+                resolver=resolver,
+                cancel_event=cancel_event,
+            )
             resolved = getattr(response, "url", "") or url
             if folder is None:
                 try:
@@ -410,6 +444,7 @@ def _open_candidate(
     session: requests.Session,
     timeout: tuple[int, int],
     resolver: Resolver | None,
+    cancel_event: Event | None,
 ) -> requests.Response:
     """Return a streamed response for ``url``, following redirects by hand.
 
@@ -459,7 +494,22 @@ def _open_candidate(
 
         content_type = (response.headers.get("Content-Type") or "").lower()
         if content_type.startswith("text/html"):
-            response.close()
+            try:
+                preview = _read_preview(
+                    response, cancel_event, needed=HTML_PREVIEW_BYTES
+                ).lower()
+            except requests.RequestException as exc:
+                raise _CandidateUnverified(
+                    "Transport error while reading the public PDF page: "
+                    f"{exc.__class__.__name__}"
+                ) from exc
+            finally:
+                response.close()
+            if any(marker in preview for marker in _CHALLENGE_MARKERS):
+                raise _CandidateUnverified(
+                    "Public PDF source could not be verified because it returned "
+                    "a bot-challenge page."
+                )
             raise _CandidateRejected("Public PDF link returned an HTML page, not a PDF.")
 
         # Record where the chain actually landed: the verified source URL is the
@@ -512,13 +562,14 @@ def _read_preview(
     """
     parts: list[bytes] = []
     total = 0
-    for chunk in response.iter_content(CHUNK_SIZE):
+    for chunk in response.iter_content(min(CHUNK_SIZE, needed)):
         if _is_cancelled(cancel_event):
             raise _Cancelled()
         if not chunk:
             continue
-        parts.append(chunk)
-        total += len(chunk)
+        remaining = needed - total
+        parts.append(chunk[:remaining])
+        total += min(len(chunk), remaining)
         if total >= needed:
             break
     return b"".join(parts)
@@ -719,19 +770,74 @@ def _discover_oa_candidates(
     except (_CandidateRejected, _CandidateUnverified):
         return None
 
-    urls: list[str] = []
-    locations = [payload.get("best_oa_location"), *(payload.get("locations") or [])]
-    for location in locations:
-        if not isinstance(location, dict):
+    return _oa_pdf_urls(payload)
+
+
+def _discover_oa_candidates_by_title(
+    title: str,
+    *,
+    session: requests.Session,
+    timeout: tuple[int, int],
+    resolver: Resolver | None,
+    cancel_event: Event | None = None,
+) -> list[str] | None:
+    """Return candidates for one unambiguous exact normalized-title match."""
+    wanted = normalize_title_key(title)
+    if not wanted:
+        return None
+
+    api_url = OPENALEX_TITLE_SEARCH_URL.format(quote(title.strip(), safe=""))
+    try:
+        payload = _open_metadata(
+            api_url,
+            session=session,
+            timeout=timeout,
+            resolver=resolver,
+            cancel_event=cancel_event,
+        )
+    except (_CandidateRejected, _CandidateUnverified):
+        return None
+
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return None
+
+    matches: dict[str, dict] = {}
+    for index, work in enumerate(results):
+        if not isinstance(work, dict):
             continue
-        if location.get("is_oa") is not True:
+        work_title = work.get("title")
+        if not isinstance(work_title, str) or normalize_title_key(work_title) != wanted:
+            continue
+        work_id = str(work.get("id") or "").strip().casefold()
+        distinct_key = work_id or f"missing-id:{index}"
+        matches.setdefault(distinct_key, work)
+        if len(matches) > 1:
+            return []
+
+    if len(matches) != 1:
+        return []
+    return _oa_pdf_urls(next(iter(matches.values())))
+
+
+def _oa_pdf_urls(work: dict) -> list[str]:
+    """Collect at most three distinct PDF URLs from OA-flagged locations."""
+    urls: list[str] = []
+    raw_locations = work.get("locations")
+    locations = [
+        work.get("best_oa_location"),
+        *(raw_locations if isinstance(raw_locations, list) else []),
+    ]
+    for location in locations:
+        if not isinstance(location, dict) or location.get("is_oa") is not True:
             continue
         url = location.get("pdf_url")
-        if isinstance(url, str) and url.strip() and url.strip() not in urls:
-            urls.append(url.strip())
+        if isinstance(url, str):
+            candidate = url.strip()
+            if candidate and candidate not in urls:
+                urls.append(candidate)
         if len(urls) >= 3:
             break
-
     return urls
 
 

@@ -9,7 +9,12 @@ from google_scholar_scraper.enrichment import (
     record_from_crossref_message,
 )
 from google_scholar_scraper.journal_catalog import JournalCatalog
-from google_scholar_scraper.models import Article, PDF_STATUS_AVAILABLE, PDF_STATUS_UNKNOWN
+from google_scholar_scraper.models import (
+    Article,
+    PDF_STATUS_AVAILABLE,
+    PDF_STATUS_UNKNOWN,
+    normalize_title_key,
+)
 
 
 JOURNAL_MESSAGE = {
@@ -103,6 +108,14 @@ class RecordingLookup:
 
     def close(self) -> None:
         self.closed = True
+
+
+class TitleNormalizationTests(unittest.TestCase):
+    def test_normalize_title_key_decomposes_case_punctuation_and_diacritics(self) -> None:
+        self.assertEqual(
+            normalize_title_key("  Étude: DEEP-Learning!  "),
+            "etudedeeplearning",
+        )
 
 
 class CrossrefMappingTests(unittest.TestCase):

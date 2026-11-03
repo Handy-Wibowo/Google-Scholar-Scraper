@@ -20,7 +20,11 @@ import unicodedata
 import requests
 
 from google_scholar_scraper.journal_catalog import JournalCatalog, catalog_matches
-from google_scholar_scraper.models import Article, normalize_issn_list
+from google_scholar_scraper.models import (
+    Article,
+    normalize_issn_list,
+    normalize_title_key,
+)
 
 
 CROSSREF_BASE_URL = "https://api.crossref.org/works/"
@@ -39,7 +43,6 @@ DEFAULT_TITLE_ROWS = 20
 ProgressCallback = Callable[[int, int, str], None]
 
 _YEAR_RE = re.compile(r"^(1[5-9]\d\d|2[01]\d\d)$")
-_NON_ALNUM_RE = re.compile(r"[^0-9a-z]+")
 
 # Only these Crossref work types describe a journal article. A conference paper, a
 # preprint, a dataset or a book chapter can carry an ISSN-bearing container, but it is not
@@ -151,7 +154,7 @@ class CrossrefClient:
         caller also knows an author or a year, a candidate contradicting either is rejected
         too.
         """
-        wanted_key = _title_key(title)
+        wanted_key = normalize_title_key(title)
         if not wanted_key:
             return None
 
@@ -182,7 +185,7 @@ class CrossrefClient:
             # otherwise a wrong DOI would be stamped onto the article.
             if str(item.get("type") or "").strip().casefold() not in _JOURNAL_WORK_TYPES:
                 continue
-            if _title_key(_first_text(item.get("title"))) != wanted_key:
+            if normalize_title_key(_first_text(item.get("title"))) != wanted_key:
                 continue
             if not _author_consistent(author, item):
                 continue
@@ -435,11 +438,6 @@ def _close_quietly(response) -> None:
             pass
 
 
-def _title_key(value: str) -> str:
-    """Conservative comparison key for article titles: case, punctuation, diacritics."""
-    normalized = unicodedata.normalize("NFKD", value or "")
-    decomposed = "".join(char for char in normalized if not unicodedata.combining(char))
-    return _NON_ALNUM_RE.sub("", decomposed.casefold())
 
 
 def _title_query_key(title: str, author: str, year: int | None) -> str:
@@ -456,7 +454,7 @@ def _title_query_key(title: str, author: str, year: int | None) -> str:
     query. Returns "" for a title with no comparable characters, which is not worth asking
     about at all.
     """
-    title_key = _title_key(title)
+    title_key = normalize_title_key(title)
     if not title_key:
         return ""
     author_key = " ".join(sorted(set(_title_tokens(author))))
@@ -516,7 +514,7 @@ def _title_tokens(value: str) -> list[str]:
     decomposed = "".join(char for char in normalized if not unicodedata.combining(char))
     return [
         token
-        for token in _NON_ALNUM_RE.split(decomposed.casefold())
+        for token in re.split(r"[^0-9a-z]+", decomposed.casefold())
         if len(token) >= 3 and not token.isdigit()
     ]
 

@@ -350,7 +350,16 @@ class MainWindowStateTests(unittest.TestCase):
         )
         self.assertEqual(window.results_table.iids, [article_iid(0)])
         self.assertEqual(window.status_heading_var.get(), "Search complete")
-        self.assertEqual(window.status_var.get(), "Done")
+        self.assertEqual(
+            window.status_var.get(),
+            "Done Run 'Check metadata / PDFs' to detect which papers have downloadable public PDFs; "
+            "until then every PDF column shows Unknown.",
+        )
+        self.assertIn(
+            "Run 'Check metadata / PDFs' to detect which papers have downloadable public PDFs; "
+            "until then every PDF column shows Unknown.",
+            window.status_var.get(),
+        )
         self.assertEqual(window.button_export_excel.state, tkinter_app.tk.NORMAL)
         self.assertEqual(window.button_export_csv.state, tkinter_app.tk.NORMAL)
 

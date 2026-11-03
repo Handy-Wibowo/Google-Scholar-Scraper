@@ -16,6 +16,9 @@ installer, portable ZIP, and `SHA256SUMS.txt` are the release assets.
 - Preserve unknown article years, local ranking, metadata/PDF workflows and all export columns.
 - Reuse the exact existing dependencies and corrected Tcl/Tk packaging hook.
 - Added offline regressions and native-DPI year-control/layout acceptance checks.
+- Bot-challenge HTML returned by public-PDF links now keeps PDF availability `unknown` instead of incorrectly reporting `unavailable`.
+- Added an exact-title OpenAlex fallback for public-PDF discovery when a result has no DOI.
+- After a search, the UI now reminds users to run `Check metadata / PDFs`.
 
 ## 2.1.0
 

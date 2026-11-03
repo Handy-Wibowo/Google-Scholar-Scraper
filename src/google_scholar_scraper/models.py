@@ -2,6 +2,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 import re
+import unicodedata
 
 
 # PDF states are exactly these three values. "unavailable" means no public PDF was
@@ -14,6 +15,16 @@ PDF_STATUS_UNKNOWN = "unknown"
 PDF_STATUSES = (PDF_STATUS_AVAILABLE, PDF_STATUS_UNAVAILABLE, PDF_STATUS_UNKNOWN)
 
 _ISSN_RE = re.compile(r"^(\d{4})-?(\d{3}[\dX])$")
+_NON_ALNUM_RE = re.compile(r"[^0-9a-z]+")
+
+
+def normalize_title_key(value: str) -> str:
+    """Return a conservative comparison key for an article title."""
+    normalized = unicodedata.normalize("NFKD", value or "")
+    decomposed = "".join(char for char in normalized if not unicodedata.combining(char))
+    return _NON_ALNUM_RE.sub("", decomposed.casefold())
+
+
 
 
 def normalize_issn(value: str) -> str:
