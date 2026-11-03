@@ -11,8 +11,13 @@ import tkinter as tk
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from google_scholar_scraper import __version__
-from google_scholar_scraper.enrichment import enrich_articles
-from google_scholar_scraper.exporters import save_to_csv, save_to_excel
+from google_scholar_scraper.enrichment import enrich_articles, resolve_citations
+from google_scholar_scraper.exporters import (
+    save_to_bibtex,
+    save_to_csv,
+    save_to_excel,
+    save_to_ris,
+)
 from google_scholar_scraper.journal_catalog import JournalCatalog, apply_rank, catalog_matches
 from google_scholar_scraper.models import (
     PDF_STATUS_AVAILABLE,
@@ -28,6 +33,8 @@ from google_scholar_scraper.scraper.client import scrape_scholar, validate_year_
 
 DEFAULT_EXCEL_FILENAME = "scholar_articles.xlsx"
 DEFAULT_CSV_FILENAME = "scholar_articles.csv"
+DEFAULT_BIBTEX_FILENAME = "scholar_articles.bib"
+DEFAULT_RIS_FILENAME = "scholar_articles.ris"
 APP_TITLE = "Google Scholar Scraper"
 
 # PDF filter labels map one-to-one onto the three stored states, so the filter can never
@@ -62,6 +69,7 @@ OPERATION_HEADINGS = {
     "check": "Checking metadata and public PDFs",
     "import": "Importing journal ranking records",
     "download": "Downloading selected public PDFs",
+    "citations": "Exporting citations",
 }
 
 NO_RANKING_NOTICE = "No ranks imported."
@@ -392,6 +400,44 @@ def run_download(
     return {"indices": list(indices), "articles": results, "folder": folder}
 
 
+def run_citation_export(
+    articles: list[Article], fmt: str, path: str, cancel_event: threading.Event, progress
+) -> dict:
+    """Resolve citations, then write one BibTeX or RIS file; input order is preserved.
+
+    ``fmt`` is the literal ``"bibtex"`` or ``"ris"``. A cancelled run writes nothing
+    rather than a partial file; unresolved records are exported with known fields
+    and a review note — never dropped, never fabricated.
+    """
+    total = len(articles)
+    records = resolve_citations(
+        articles,
+        cancel_event,
+        lambda current, count, label: progress(current, total * 2 + 1, f"lookup: {label}"),
+    )
+    if cancel_event.is_set():
+        return {
+            "fmt": fmt,
+            "path": path,
+            "count": total,
+            "verified": 0,
+            "written": False,
+            "cancelled": True,
+        }
+
+    writer = save_to_bibtex if fmt == "bibtex" else save_to_ris
+    writer(records, path)
+    progress(total * 2 + 1, total * 2 + 1, "written")
+    return {
+        "fmt": fmt,
+        "path": path,
+        "count": len(records),
+        "verified": sum(1 for record in records if record.verified),
+        "written": True,
+        "cancelled": False,
+    }
+
+
 class SearchWorker(threading.Thread):
     def __init__(
         self,
@@ -499,6 +545,9 @@ class MainWindow:
         self._closed = False
         self.detail_window: tk.Toplevel | None = None
         self.detail_body: tk.Text | None = None
+        self.citations_dialog: tk.Toplevel | None = None
+        self.citation_format_var = tk.StringVar(value="BibTeX (.bib)")
+        self.citation_scope_var = tk.StringVar(value="Visible (filtered) rows")
 
         self.query_var = tk.StringVar()
         self.pages_var = tk.StringVar(value="1")
@@ -579,6 +628,31 @@ class MainWindow:
             relief="flat",
             font=self.table_heading_font,
         )
+
+    def _build_menu_bar(self) -> None:
+        menubar = tk.Menu(self.window)
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(
+            label="Export citations…",
+            command=self.open_export_citations_dialog,
+            accelerator="Ctrl+E",
+        )
+        menubar.add_cascade(label="File", menu=file_menu)
+        self.menu_file = file_menu
+        self.menubar = menubar
+        self.window.configure(menu=menubar)
+        self.window.bind("<Control-e>", self._handle_citations_accelerator)
+
+    def _set_citations_menu_state(self, state: str) -> None:
+        """Mirror the export buttons' enable/disable state onto the File menu item."""
+        try:
+            self.menu_file.entryconfigure(0, state=state)
+        except (AttributeError, tk.TclError):
+            pass  # headless stubs in tests have no real menu
+
+    def _handle_citations_accelerator(self, _event=None) -> None:
+        self.open_export_citations_dialog()
+        return "break"
 
     def _surface(self, parent, *, border: str | None = None) -> tk.Frame:
         return tk.Frame(
@@ -763,10 +837,16 @@ class MainWindow:
         self.combo_filter.bind("<<ComboboxSelected>>", self.apply_pdf_filter)
         self.label_applied_year = ttk.Label(filter_toolbar, textvariable=self.applied_year_var, style="Muted.TLabel")
         self.label_applied_year.grid(row=0, column=2, sticky="w", padx=8)
-        self.button_export_excel = self._button(filter_toolbar, text="Export Excel", command=self.export_excel_results, width=12)
+        self.button_export_excel = self._button(filter_toolbar, text="Excel", command=self.export_excel_results, width=7)
         self.button_export_excel.grid(row=0, column=3, padx=(8, 0))
-        self.button_export_csv = self._button(filter_toolbar, text="Export CSV", command=self.export_csv_results, width=12)
+        self.button_export_csv = self._button(filter_toolbar, text="CSV", command=self.export_csv_results, width=5)
         self.button_export_csv.grid(row=0, column=4, padx=(6, 0))
+        self.button_export_citations = self._button(
+            filter_toolbar, text="Citations", command=self.open_export_citations_dialog, width=10
+        )
+        self.button_export_citations.grid(row=0, column=5, padx=(6, 0))
+        # Keep the File menu item as a secondary path; the grouped toolbar button is primary.
+        self._build_menu_bar()
 
         self.results_content = ttk.Frame(results_frame, style="App.TFrame")
         self.results_content.grid(row=1, column=0, sticky="nsew")
@@ -1059,6 +1139,117 @@ class MainWindow:
         except tk.TclError:
             pass
 
+    def open_export_citations_dialog(self) -> None:
+        """Open the citation export dialog; the button is self-guarded against tasks."""
+        if self._is_running():
+            return
+        if hasattr(self, "citations_dialog") and self.citations_dialog is not None:
+            try:
+                if self.citations_dialog.winfo_exists():
+                    self.citations_dialog.deiconify()
+                    self.citations_dialog.lift()
+                    return
+            except tk.TclError:
+                pass
+
+        dialog = tk.Toplevel(self.window)
+        dialog.title(f"{APP_TITLE} — export citations")
+        dialog.transient(self.window)
+        dialog.minsize(520, 340)
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+
+        body = ttk.Frame(dialog, style="App.TFrame", padding=14)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Citation format", style="Title.TLabel").pack(anchor="w")
+        for value in ("BibTeX (.bib)", "RIS (.ris)"):
+            ttk.Radiobutton(
+                body, text=value, value=value, variable=self.citation_format_var
+            ).pack(anchor="w", pady=(2, 0))
+        ttk.Label(body, text="Which records", style="Title.TLabel").pack(anchor="w", pady=(12, 0))
+        for value in ("Selected rows", "Visible (filtered) rows", "All collected records"):
+            ttk.Radiobutton(
+                body, text=value, value=value, variable=self.citation_scope_var
+            ).pack(anchor="w", pady=(2, 0))
+        ttk.Label(
+            body,
+            text=(
+                "References are resolved against Crossref where possible. Unresolved records are "
+                "still exported with the fields already known and a note asking you to review them."
+            ),
+            style="Muted.TLabel",
+            wraplength=460,
+            justify="left",
+        ).pack(anchor="w", pady=(12, 0))
+
+        buttons = ttk.Frame(body, style="App.TFrame")
+        buttons.pack(fill="x", pady=(14, 0))
+        export_button = self._button(
+            buttons, text="Export citations", command=self.start_citation_export, width=16, kind="primary"
+        )
+        export_button.pack(side="left")
+        close_button = self._button(buttons, text="Close", command=dialog.destroy, width=8)
+        close_button.pack(side="left", padx=(8, 0))
+
+        self.citations_dialog = dialog
+        dialog.deiconify()
+        dialog.lift()
+
+    def start_citation_export(self) -> None:
+        """Resolve the dialog's format and scope, then start the background export."""
+        if self._is_running():
+            return
+
+        scope = self.citation_scope_var.get()
+        if scope == "Selected rows":
+            articles = [article for _, article in self._selected_entries()]
+            if not articles:
+                self._set_status(
+                    "No papers selected",
+                    "Select one or more rows first, or export the visible or all collected records.",
+                    "warning",
+                )
+                return
+        elif scope == "Visible (filtered) rows":
+            articles = self._visible_articles()
+        else:
+            articles = list(self.current_articles)
+
+        if not articles:
+            self._set_status("No results to export.", "Run a search before exporting citations.", "warning")
+            return
+
+        fmt = "bibtex" if self.citation_format_var.get().startswith("BibTeX") else "ris"
+        default_name = DEFAULT_BIBTEX_FILENAME if fmt == "bibtex" else DEFAULT_RIS_FILENAME
+        folder = self.current_request.output_folder if self.current_request else self.output_folder_var.get().strip()
+        path = export_path(folder, default_name)
+
+        self.progress_var.set(0)
+        self._set_status(
+            OPERATION_HEADINGS["citations"],
+            "Resolving citations against Crossref, then writing the file. Unresolved records keep "
+            "their known fields and a review note.",
+            "running",
+        )
+        self._start_task("citations", lambda cancel, progress: run_citation_export(articles, fmt, str(path), cancel, progress))
+
+    def _finish_citation_export(self, result: object) -> None:
+        data = result if isinstance(result, dict) else {}
+        if data.get("cancelled"):
+            self._set_status(
+                "Citation export cancelled", "No citation file was written.", "warning"
+            )
+            return
+
+        count = int(data.get("count", 0))
+        verified = int(data.get("verified", 0))
+        path = str(data.get("path", ""))
+        self._set_status(
+            "Citations exported",
+            f"Exported {count} citation(s) to {path}. {verified} of {count} resolved via Crossref; "
+            "unresolved entries keep known fields and a review note.",
+            "success",
+        )
+
     def on_close(self) -> None:
         self._closed = True
         if self._is_running() and self.cancel_event is not None:
@@ -1069,6 +1260,12 @@ class MainWindow:
             except tk.TclError:
                 pass
             self.detail_window = None
+        if self.citations_dialog is not None:
+            try:
+                self.citations_dialog.destroy()
+            except tk.TclError:
+                pass
+            self.citations_dialog = None
         self.window.destroy()
 
     def run(self) -> None:
@@ -1139,6 +1336,8 @@ class MainWindow:
             self._finish_import(result)
         elif operation == "download":
             self._finish_download(result)
+        elif operation == "citations":
+            self._finish_citation_export(result)
 
         self._set_idle_state()
 
@@ -1156,6 +1355,8 @@ class MainWindow:
             heading = "Download failed"
         elif operation == "check":
             heading = "Check failed"
+        elif operation == "citations":
+            heading = "Citation export failed"
         else:
             heading = "Operation failed"
 
@@ -1458,6 +1659,8 @@ class MainWindow:
         self._set_button_state(self.button_cancel, tk.NORMAL)
         self._set_button_state(self.button_export_excel, tk.DISABLED)
         self._set_button_state(self.button_export_csv, tk.DISABLED)
+        self._set_button_state(self.button_export_citations, tk.DISABLED)
+        self._set_citations_menu_state(tk.DISABLED)
         self._set_button_state(self.button_check, tk.DISABLED)
         self._set_button_state(self.button_download, tk.DISABLED)
         self._set_button_state(self.button_details, tk.DISABLED)
@@ -1480,6 +1683,8 @@ class MainWindow:
         export_state = tk.NORMAL if has_visible else tk.DISABLED
         self._set_button_state(self.button_export_excel, export_state)
         self._set_button_state(self.button_export_csv, export_state)
+        self._set_button_state(self.button_export_citations, export_state)
+        self._set_citations_menu_state(export_state)
         self._set_button_state(self.button_check, tk.NORMAL if has_articles else tk.DISABLED)
         self._set_button_state(self.button_download, tk.NORMAL if has_articles else tk.DISABLED)
         self._set_button_state(self.button_details, tk.NORMAL if has_articles else tk.DISABLED)

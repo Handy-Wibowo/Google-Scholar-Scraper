@@ -3,10 +3,13 @@ import unittest
 from threading import Event
 
 from google_scholar_scraper.enrichment import (
+    SCHOLAR_AUTHORS_WARNING,
+    UNRESOLVED_WARNING,
     CrossrefClient,
     CrossrefRecord,
     enrich_articles,
     record_from_crossref_message,
+    resolve_citations,
 )
 from google_scholar_scraper.journal_catalog import JournalCatalog
 from google_scholar_scraper.models import (
@@ -102,7 +105,7 @@ class RecordingLookup:
         self.doi_calls.append(doi)
         return self._by_doi.get(doi)
 
-    def lookup_title(self, title: str, *, author: str = "", year: int | None = None, rows: int = 20):
+    def lookup_title(self, title: str, *, author: str = "", year: int | None = None, rows: int = 20, work_types=None):
         self.title_calls.append((title, author, year))
         return self._by_constraints.get((title, author, year))
 
@@ -586,6 +589,160 @@ class EnrichmentTests(unittest.TestCase):
 
         self.assertEqual(result, articles)
         self.assertEqual(session.requests, [])
+
+
+class CitationFieldTests(unittest.TestCase):
+    PROCEEDINGS_MESSAGE = {
+        "DOI": "10.1145/conf.2023.001",
+        "type": "proceedings-article",
+        "title": ["A Conference Paper"],
+        "container-title": ["Conference on Examples"],
+        "ISSN": ["1234-5679"],
+        "publisher": "ACM",
+        "volume": "2023",
+        "issue": "1",
+        "page": "1007-1016",
+        "URL": "https://doi.org/10.1145/conf.2023.001",
+        "published-print": {"date-parts": [[2023, 7]]},
+        "author": [
+            {"given": "Songgaojun", "family": "Deng"},
+            {"given": "Huzefa", "family": "Rangwala"},
+        ],
+    }
+
+    def test_proceedings_record_carries_citation_fields_without_a_journal_label(self) -> None:
+        record = record_from_crossref_message(self.PROCEEDINGS_MESSAGE)
+
+        # Citation data is venue-independent...
+        self.assertEqual(record.authors, ("Songgaojun Deng", "Huzefa Rangwala"))
+        self.assertEqual(record.container_any, "Conference on Examples")
+        self.assertEqual(record.volume, "2023")
+        self.assertEqual(record.issue, "1")
+        self.assertEqual(record.pages, "1007-1016")
+        self.assertEqual(record.publisher, "ACM")
+        self.assertEqual(record.url, "https://doi.org/10.1145/conf.2023.001")
+        self.assertEqual(record.issns_any, ("1234-5679",))
+        # ...but journal identity stays type-gated for ranking.
+        self.assertEqual(record.journal, "")
+        self.assertEqual(record.issns, ())
+
+    def test_title_select_widened_with_citation_fields(self) -> None:
+        from google_scholar_scraper.enrichment import _TITLE_SELECT
+
+        for field in ("volume", "issue", "page", "publisher", "URL"):
+            self.assertIn(field, _TITLE_SELECT)
+
+
+class ResolveCitationsTests(unittest.TestCase):
+    def test_doi_hit_builds_a_verified_record(self) -> None:
+        client = RecordingLookup(by_doi={"10.1234/example.2024.001": CrossrefRecord(
+            doi="10.1234/example.2024.001",
+            journal="Journal of Examples",
+            authors=("A Author",),
+            container_any="Journal of Examples",
+            issns_any=("1234-5679",),
+            year=2024,
+            volume="12",
+            issue="3",
+            pages="1-9",
+            publisher="Examples Press",
+            url="https://doi.org/10.1234/example.2024.001",
+            work_type="journal-article",
+        )})
+
+        result = resolve_citations(
+            [Article(title="Deep Learning for Medical Imaging", doi="10.1234/example.2024.001")],
+            lookup=client,
+        )
+
+        self.assertEqual(len(result), 1)
+        citation = result[0]
+        self.assertTrue(citation.verified)
+        self.assertEqual(citation.source, "crossref")
+        self.assertEqual(citation.authors, ("A Author",))
+        self.assertEqual(citation.container, "Journal of Examples")
+        self.assertEqual(citation.volume, "12")
+        self.assertEqual(citation.issue, "3")
+        self.assertEqual(citation.pages, "1-9")
+        self.assertEqual(citation.publisher, "Examples Press")
+        self.assertEqual(citation.entry_type, "journal-article")
+        self.assertEqual(citation.warnings, ())
+
+    def test_doi_miss_stays_unresolved_without_a_title_fallback(self) -> None:
+        client = RecordingLookup()
+
+        result = resolve_citations(
+            [
+                Article(
+                    title="Deep Learning for Medical Imaging",
+                    authors="A Author, B Author - Journal of Examples, 2024 - publisher.example",
+                    doi="10.1234/missing.2024.001",
+                )
+            ],
+            lookup=client,
+        )
+
+        citation = result[0]
+        self.assertFalse(citation.verified)
+        self.assertEqual(citation.source, "scholar")
+        self.assertEqual(citation.authors, ())
+        self.assertEqual(
+            citation.fallback_authors_line,
+            "A Author, B Author - Journal of Examples, 2024 - publisher.example",
+        )
+        self.assertIn(UNRESOLVED_WARNING, citation.warnings)
+        self.assertIn(SCHOLAR_AUTHORS_WARNING, citation.warnings)
+        # A DOI failure must not fall back to a title guess.
+        self.assertEqual(client.title_calls, [])
+
+    def test_title_path_resolves_proceedings_and_journal_gate_untouched(self) -> None:
+        client = RecordingLookup(
+            by_constraints={
+                ("A Conference Paper", "", None): CrossrefRecord(
+                    doi="10.1145/conf.2023.001",
+                    authors=("S Deng",),
+                    container_any="Conference on Examples",
+                    year=2023,
+                    work_type="proceedings-article",
+                )
+            }
+        )
+
+        result = resolve_citations([Article(title="A Conference Paper")], lookup=client)
+
+        self.assertTrue(result[0].verified)
+        self.assertEqual(result[0].container, "Conference on Examples")
+
+    def test_same_doi_is_looked_up_once(self) -> None:
+        client = RecordingLookup(by_doi={"10.1000/same": CrossrefRecord(doi="10.1000/same")})
+        articles = [
+            Article(title="First", doi="10.1000/same"),
+            Article(title="Second", doi="10.1000/same"),
+        ]
+
+        result = resolve_citations(articles, lookup=client)
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(client.doi_calls, ["10.1000/same"])
+
+    def test_cancellation_returns_unresolved_records_in_order(self) -> None:
+        cancel = Event()
+        client = RecordingLookup(by_doi={"10.1000/a": CrossrefRecord(doi="10.1000/a", year=2020)})
+
+        def cancel_after_first(_doi):
+            cancel.set()
+            return None
+
+        client.lookup = cancel_after_first  # type: ignore[method-assign]
+        articles = [
+            Article(title="First", doi="10.1000/a"),
+            Article(title="Second", doi="10.1000/b"),
+        ]
+
+        result = resolve_citations(articles, cancel, lookup=client)
+
+        self.assertEqual([citation.title for citation in result], ["First", "Second"])
+        self.assertTrue(all(not citation.verified for citation in result))
 
 
 if __name__ == "__main__":

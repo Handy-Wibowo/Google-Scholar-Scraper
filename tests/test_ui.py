@@ -1,6 +1,7 @@
 import queue
 import tempfile
 import threading
+import tkinter as tk
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -8,6 +9,7 @@ from dataclasses import replace
 
 from google_scholar_scraper.journal_catalog import JournalCatalog, apply_rank, catalog_matches
 from google_scholar_scraper.models import (
+    CitationRecord,
     PDF_STATUS_AVAILABLE,
     PDF_STATUS_UNAVAILABLE,
     PDF_STATUS_UNKNOWN,
@@ -40,6 +42,7 @@ from google_scholar_scraper.ui.tkinter_app import (
     progress_value,
     result_summary,
     run_check,
+    run_citation_export,
     run_download,
     run_import,
     status_message,
@@ -108,6 +111,16 @@ class DummyTable:
 class DummyStyle:
     def configure(self, *_args, **_kwargs) -> None:
         return None
+
+
+class DummyMenu:
+    """Minimal tk.Menu stand-in recording entryconfigure calls."""
+
+    def __init__(self) -> None:
+        self.configured: list[tuple] = []
+
+    def entryconfigure(self, index, **kwargs) -> None:
+        self.configured.append((index, kwargs))
 
 
 class FakeRunningWorker:
@@ -228,6 +241,9 @@ def state_window() -> MainWindow:
     window._closed = False
     window.detail_window = None
     window.detail_body = None
+    window.citations_dialog = None
+    window.citation_format_var = DummyVar("BibTeX (.bib)")
+    window.citation_scope_var = DummyVar("Visible (filtered) rows")
     window.query_var = DummyVar("query")
     window.pages_var = DummyVar("1")
     window.ranking_var = DummyVar(True)
@@ -261,6 +277,8 @@ def state_window() -> MainWindow:
     window.button_cancel = DummyWidget()
     window.button_export_excel = DummyWidget()
     window.button_export_csv = DummyWidget()
+    window.button_export_citations = DummyWidget()
+    window.menu_file = DummyMenu()
     window.button_check = DummyWidget()
     window.button_download = DummyWidget()
     window.button_details = DummyWidget()
@@ -960,6 +978,7 @@ class RealTkGeometryTests(unittest.TestCase):
         "combo_filter",
         "button_export_csv",
         "button_export_excel",
+        "button_export_citations",
         "button_import",
         "button_browse",
         "combo_year",
@@ -1158,6 +1177,185 @@ class YearFilterUITests(unittest.TestCase):
         self.assertEqual(tkinter_app.year_range_label(None, None), "Years: any time")
         self.assertEqual(tkinter_app.year_range_label(2024, None), "Years: since 2024")
         self.assertEqual(tkinter_app.year_range_label(None, 2024), "Years: through 2024")
+
+
+class RunCitationExportTests(unittest.TestCase):
+    def test_export_resolves_then_writes_bibtex(self) -> None:
+        records = [CitationRecord(title="One", verified=True), CitationRecord(title="Two")]
+        articles = [Article("One"), Article("Two")]
+        written: list[tuple] = []
+
+        with (
+            patch("google_scholar_scraper.ui.tkinter_app.resolve_citations", return_value=records) as resolve,
+            patch("google_scholar_scraper.ui.tkinter_app.save_to_bibtex", side_effect=lambda r, p: written.append((r, p))),
+            patch("google_scholar_scraper.ui.tkinter_app.save_to_ris") as save_ris,
+        ):
+            result = run_citation_export(articles, "bibtex", "C:/out/citations.bib", threading.Event(), lambda *args: None)
+
+        self.assertTrue(result["written"])
+        self.assertFalse(result["cancelled"])
+        self.assertEqual(result["fmt"], "bibtex")
+        self.assertEqual(result["count"], 2)
+        self.assertEqual(result["verified"], 1)
+        self.assertEqual(resolve.call_args.args[0], articles)
+        self.assertEqual(written[0][0], records)
+        save_ris.assert_not_called()
+
+    def test_export_writes_ris_for_ris_format(self) -> None:
+        with (
+            patch("google_scholar_scraper.ui.tkinter_app.resolve_citations", return_value=[]),
+            patch("google_scholar_scraper.ui.tkinter_app.save_to_bibtex") as save_bibtex,
+            patch("google_scholar_scraper.ui.tkinter_app.save_to_ris") as save_ris,
+        ):
+            result = run_citation_export([Article("One")], "ris", "C:/out/citations.ris", threading.Event(), lambda *args: None)
+
+        save_bibtex.assert_not_called()
+        save_ris.assert_called_once()
+        self.assertEqual(result["fmt"], "ris")
+
+    def test_cancelled_export_writes_nothing(self) -> None:
+        cancel = threading.Event()
+        cancel.set()
+
+        with (
+            patch("google_scholar_scraper.ui.tkinter_app.resolve_citations", return_value=[]),
+            patch("google_scholar_scraper.ui.tkinter_app.save_to_bibtex") as save_bibtex,
+            patch("google_scholar_scraper.ui.tkinter_app.save_to_ris") as save_ris,
+        ):
+            result = run_citation_export([Article("One")], "bibtex", "C:/out/x.bib", cancel, lambda *args: None)
+
+        self.assertTrue(result["cancelled"])
+        self.assertFalse(result["written"])
+        save_bibtex.assert_not_called()
+        save_ris.assert_not_called()
+
+    def test_finish_reports_verified_and_unresolved_counts(self) -> None:
+        window = state_window()
+        window._finish_citation_export(
+            {"fmt": "bibtex", "path": "C:/out/citations.bib", "count": 4, "verified": 3, "written": True, "cancelled": False}
+        )
+
+        self.assertEqual(window.status_heading_var.get(), "Citations exported")
+        self.assertIn("Exported 4 citation(s) to C:/out/citations.bib", window.status_var.get())
+        self.assertIn("3 of 4 resolved via Crossref", window.status_var.get())
+        self.assertIn("review note", window.status_var.get())
+
+    def test_finish_reports_cancellation_without_a_file(self) -> None:
+        window = state_window()
+        window._finish_citation_export({"cancelled": True})
+
+        self.assertEqual(window.status_heading_var.get(), "Citation export cancelled")
+        self.assertIn("No citation file was written.", window.status_var.get())
+
+
+class CitationDialogTests(unittest.TestCase):
+    def test_selected_scope_without_selection_warns_and_does_not_start(self) -> None:
+        window = state_window()
+        window.citation_scope_var = DummyVar("Selected rows")
+
+        with patch.object(tkinter_app.MainWindow, "_start_task") as start_task:
+            window.start_citation_export()
+
+        start_task.assert_not_called()
+        self.assertEqual(window.status_heading_var.get(), "No papers selected")
+
+    def test_empty_visible_scope_warns_and_does_not_start(self) -> None:
+        window = state_window()
+        window.citation_scope_var = DummyVar("Visible (filtered) rows")
+
+        with patch.object(tkinter_app.MainWindow, "_start_task") as start_task:
+            window.start_citation_export()
+
+        start_task.assert_not_called()
+        self.assertEqual(window.status_heading_var.get(), "No results to export.")
+
+    def test_visible_scope_starts_bibtex_task_for_visible_articles(self) -> None:
+        window = state_window()
+        window.current_articles = [Article("Shown"), Article("Hidden")]
+        window.citation_scope_var = DummyVar("Visible (filtered) rows")
+        started: list[tuple] = []
+
+        def record_start(operation, work):
+            cancel = threading.Event()
+            started.append((operation, work(cancel, lambda *args: None)))
+
+        with patch.object(tkinter_app.MainWindow, "_start_task", side_effect=record_start):
+            window.start_citation_export()
+
+        self.assertEqual(started[0][0], "citations")
+        self.assertEqual(started[0][1]["fmt"], "bibtex")
+        self.assertEqual(started[0][1]["count"], 2)
+        self.assertTrue(started[0][1]["written"])
+
+    def test_all_scope_uses_every_stored_record_and_ris_format(self) -> None:
+        window = state_window()
+        window.current_articles = [Article("A"), Article("B"), Article("C")]
+        window.citation_format_var = DummyVar("RIS (.ris)")
+        window.citation_scope_var = DummyVar("All collected records")
+        started: list[tuple] = []
+
+        def record_start(operation, work):
+            cancel = threading.Event()
+            started.append((operation, work(cancel, lambda *args: None)))
+
+        with patch.object(tkinter_app.MainWindow, "_start_task", side_effect=record_start):
+            window.start_citation_export()
+
+        self.assertEqual(started[0][1]["fmt"], "ris")
+        self.assertEqual(started[0][1]["count"], 3)
+
+    def test_selected_scope_starts_with_selected_rows_only(self) -> None:
+        window = state_window()
+        window.current_articles = [Article("Alpha"), Article("Beta"), Article("Gamma")]
+        window.results_table = DummyTable()
+        window.results_table.insert("", "end", iid=article_iid(1), values=("Beta",))
+        window.results_table.insert("", "end", iid=article_iid(2), values=("Gamma",))
+        window.results_table.selection_set((article_iid(1),))
+        window.citation_scope_var = DummyVar("Selected rows")
+        started: list[tuple] = []
+
+        def record_start(operation, work):
+            cancel = threading.Event()
+            started.append((operation, work(cancel, lambda *args: None)))
+
+        with patch.object(tkinter_app.MainWindow, "_start_task", side_effect=record_start):
+            window.start_citation_export()
+
+        self.assertEqual(started[0][1]["count"], 1)
+
+
+class CitationsMenuTests(unittest.TestCase):
+    @unittest.skipUnless(TK_AVAILABLE, "Tk display is unavailable in this environment")
+    def test_menu_item_exists_and_is_enabled(self) -> None:
+        window = MainWindow()
+        try:
+            menubar = window.menubar
+            self.assertEqual(menubar.type(0), "cascade")
+            self.assertEqual(menubar.entrycget(0, "label"), "File")
+            file_menu = window.menu_file
+            self.assertEqual(file_menu.entrycget(0, "label"), "Export citations…")
+            # An empty window starts with no visible results, so the item starts
+            # disabled — exactly like the Export Excel/CSV buttons.
+            self.assertEqual(file_menu.entrycget(0, "state"), tk.DISABLED)
+        finally:
+            try:
+                window.on_close()
+            except Exception:
+                pass
+
+    def test_idle_state_enables_citations_menu_only_with_results(self) -> None:
+        window = state_window()
+        window._set_idle_state()
+        self.assertEqual(window.menu_file.configured[-1], (0, {"state": tk.DISABLED}))
+
+        window.current_articles = [Article("A")]
+        window._set_idle_state()
+        self.assertEqual(window.menu_file.configured[-1], (0, {"state": tk.NORMAL}))
+
+    def test_running_state_disables_citations_menu(self) -> None:
+        window = state_window()
+        window._set_running_state("search")
+        self.assertEqual(window.menu_file.configured[-1], (0, {"state": tk.DISABLED}))
 
 
 if __name__ == "__main__":

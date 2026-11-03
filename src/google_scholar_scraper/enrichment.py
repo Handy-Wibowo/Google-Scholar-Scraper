@@ -22,6 +22,7 @@ import requests
 from google_scholar_scraper.journal_catalog import JournalCatalog, catalog_matches
 from google_scholar_scraper.models import (
     Article,
+    CitationRecord,
     normalize_issn_list,
     normalize_title_key,
 )
@@ -51,8 +52,14 @@ _JOURNAL_WORK_TYPES = frozenset({"journal-article"})
 
 _TITLE_SELECT = (
     "DOI,title,container-title,short-container-title,ISSN,type,author,"
-    "issued,published-print,published-online,link,license"
+    "issued,published-print,published-online,link,license,"
+    "volume,issue,page,publisher,URL"
 )
+
+# Work types that may be resolved into a *citation* by exact title. Citations need
+# the honest venue of the work, so proceedings papers qualify here even though
+# they must never receive a journal ranking label.
+_CITATION_WORK_TYPES = frozenset({"journal-article", "proceedings-article"})
 
 
 @dataclass(frozen=True)
@@ -66,6 +73,17 @@ class CrossrefRecord:
     work_type: str = ""
     pdf_candidate_url: str = ""
     pdf_candidate_source: str = ""
+    # Citation-grade fields, filled from the deposit regardless of work type.
+    # `issns_any`/`container_any` are the un-gated venue facts; the type-gated
+    # `journal`/`issns` above remain the only source of journal ranking labels.
+    authors: tuple[str, ...] = ()
+    container_any: str = ""
+    volume: str = ""
+    issue: str = ""
+    pages: str = ""
+    publisher: str = ""
+    url: str = ""
+    issns_any: tuple[str, ...] = ()
 
 
 class CrossrefClient:
@@ -139,6 +157,7 @@ class CrossrefClient:
         author: str = "",
         year: int | None = None,
         rows: int = DEFAULT_TITLE_ROWS,
+        work_types: frozenset[str] | None = None,
     ) -> CrossrefRecord | None:
         """Resolve a missing DOI by an exact normalized title match, or return None.
 
@@ -147,6 +166,9 @@ class CrossrefClient:
         unrelated works. When the caller knows a year it is also pushed into the API filter
         (padded by the same one-year drift `_year_consistent` tolerates, so online-first and
         print dates both survive); with no known year no filter is sent.
+
+        ``work_types`` narrows which Crossref work types may be resolved (default: journal
+        articles only, the ranking-safe gate).
 
         A candidate is only accepted when its normalized title is *identical* to the
         requested one — no similarity score, no token overlap. If several distinct DOIs
@@ -157,6 +179,8 @@ class CrossrefClient:
         wanted_key = normalize_title_key(title)
         if not wanted_key:
             return None
+
+        accepted_types = _JOURNAL_WORK_TYPES if work_types is None else frozenset(work_types)
 
         params: dict[str, object] = {
             "query.title": title.strip(),
@@ -181,9 +205,9 @@ class CrossrefClient:
             if not isinstance(item, dict):
                 continue
             # A title alone is a weak identity: a book chapter, a dataset or a preprint can
-            # carry the very same words. Only a journal article may be resolved this way,
-            # otherwise a wrong DOI would be stamped onto the article.
-            if str(item.get("type") or "").strip().casefold() not in _JOURNAL_WORK_TYPES:
+            # carry the very same words. Only the caller-accepted work types may be
+            # resolved this way, otherwise a wrong DOI would be stamped onto the article.
+            if str(item.get("type") or "").strip().casefold() not in accepted_types:
                 continue
             if normalize_title_key(_first_text(item.get("title"))) != wanted_key:
                 continue
@@ -252,6 +276,21 @@ def record_from_crossref_message(message: dict, *, fallback_doi: str = "") -> Cr
         )
         issns = normalize_issn_list(_as_text_list(message.get("ISSN")))
 
+    # Citation data is venue/type-independent: a proceedings paper's venue is
+    # legitimate citation information even though it earns no journal label.
+    authors: list[str] = []
+    for entry in message.get("author") or ():
+        if not isinstance(entry, dict):
+            continue
+        given = str(entry.get("given") or "").strip()
+        family = str(entry.get("family") or "").strip()
+        name = str(entry.get("name") or "").strip()
+        authors.append(f"{given} {family}".strip() if family else name)
+    container_any = _first_text(message.get("container-title")) or _first_text(
+        message.get("short-container-title")
+    )
+    issns_any = normalize_issn_list(_as_text_list(message.get("ISSN")))
+
     pdf_url, pdf_source = _public_pdf_candidate(message)
 
     return CrossrefRecord(
@@ -262,6 +301,14 @@ def record_from_crossref_message(message: dict, *, fallback_doi: str = "") -> Cr
         work_type=work_type,
         pdf_candidate_url=pdf_url,
         pdf_candidate_source=pdf_source,
+        authors=tuple(authors),
+        container_any=container_any,
+        volume=str(message.get("volume") or "").strip(),
+        issue=str(message.get("issue") or "").strip(),
+        pages=str(message.get("page") or "").strip(),
+        publisher=str(message.get("publisher") or "").strip(),
+        url=str(message.get("URL") or "").strip(),
+        issns_any=issns_any,
     )
 
 
@@ -348,6 +395,132 @@ def enrich_articles(
 
             if progress_callback is not None:
                 progress_callback(index + 1, total, enriched.title or article.title)
+    finally:
+        if owns_client:
+            client.close()
+
+    return results
+
+
+# Explicit review notices carried by unresolved citation records. Copy-pasted
+# contract text: the serializers and tests assert these exact strings.
+UNRESOLVED_WARNING = (
+    "Unresolved work: metadata was not verified against Crossref; review before citing."
+)
+SCHOLAR_AUTHORS_WARNING = (
+    "Authors could not be verified; the raw Google Scholar citation line is "
+    "preserved in the note."
+)
+
+
+def _citation_from_record(article: Article, record: CrossrefRecord) -> CitationRecord:
+    """Build a verified citation record from a resolved Crossref record.
+
+    The article supplies only fallbacks for facts the deposit lacks (title, year,
+    link). Nothing is inferred beyond what Crossref reported.
+    """
+    return CitationRecord(
+        title=article.title,
+        authors=record.authors,
+        year=record.year if record.year is not None else article.publication_year,
+        container=record.container_any,
+        entry_type=record.work_type,
+        doi=record.doi or article.doi,
+        issns=record.issns_any,
+        volume=record.volume,
+        issue=record.issue,
+        pages=record.pages,
+        publisher=record.publisher,
+        url=record.url or article.link,
+        source="crossref",
+        verified=True,
+    )
+
+
+def _unresolved_citation(article: Article) -> CitationRecord:
+    """Build an exportable but explicitly unverified citation record.
+
+    The Scholar author display line is preserved verbatim for a note — it is a
+    mixed author/venue/year string and is never parsed into structured authors.
+    """
+    return CitationRecord(
+        title=article.title,
+        year=article.publication_year,
+        container=article.journal,
+        issns=article.issns,
+        doi=article.doi,
+        url=article.link,
+        source="scholar",
+        verified=False,
+        fallback_authors_line=article.authors,
+        warnings=(UNRESOLVED_WARNING, SCHOLAR_AUTHORS_WARNING),
+    )
+
+
+def resolve_citations(
+    articles: list[Article],
+    cancel_event: Event | None = None,
+    progress_callback: ProgressCallback | None = None,
+    *,
+    lookup: CrossrefClient | None = None,
+    max_lookups: int | None = None,
+) -> list[CitationRecord]:
+    """Resolve one citation record per article, preserving input order.
+
+    A DOI-bearing article is resolved by DOI only: when Crossref cannot answer for
+    that DOI, a title guess must not silently swap in a different work, so the
+    record stays unverified. An article without a DOI may be resolved by an exact
+    normalized title match against journal articles and proceedings papers. Every
+    article comes back — unresolved ones as explicitly unverified records.
+    """
+    client = lookup if lookup is not None else CrossrefClient()
+    owns_client = lookup is None
+    total = len(articles)
+    results: list[CitationRecord] = []
+    doi_cache: dict[str, CrossrefRecord | None] = {}
+    title_cache: dict[str, CrossrefRecord | None] = {}
+    lookups_done = 0
+    title_lookups_done = 0
+
+    try:
+        for index, article in enumerate(articles):
+            if cancel_event is not None and cancel_event.is_set():
+                results.extend(_unresolved_citation(item) for item in articles[index:])
+                if progress_callback is not None:
+                    progress_callback(index, total, "Cancelled")
+                return results
+
+            record: CrossrefRecord | None = None
+            doi = article.doi.strip()
+            if doi:
+                if doi in doi_cache:
+                    record = doi_cache[doi]
+                elif max_lookups is None or lookups_done < max_lookups:
+                    doi_cache[doi] = client.lookup(doi)
+                    lookups_done += 1
+                    record = doi_cache[doi]
+
+            if record is None and not doi and article.title.strip():
+                key = _title_query_key(article.title, article.authors, article.publication_year)
+                if key in title_cache:
+                    record = title_cache[key]
+                elif max_lookups is None or title_lookups_done < max_title_lookups:
+                    title_cache[key] = client.lookup_title(
+                        article.title,
+                        author=article.authors,
+                        year=article.publication_year,
+                        work_types=_CITATION_WORK_TYPES,
+                    )
+                    title_lookups_done += 1
+                    record = title_cache[key]
+
+            if record is not None:
+                results.append(_citation_from_record(article, record))
+            else:
+                results.append(_unresolved_citation(article))
+
+            if progress_callback is not None:
+                progress_callback(index + 1, total, article.title or "record")
     finally:
         if owns_client:
             client.close()

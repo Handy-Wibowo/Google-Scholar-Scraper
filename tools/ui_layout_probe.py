@@ -91,6 +91,7 @@ def _child() -> int:
                 ("button_download", app.button_download),
                 ("combo_filter", app.combo_filter),
                 ("button_export_csv", app.button_export_csv),
+                ("button_export_citations", app.button_export_citations),
                 ("results_table", app.results_table),
                 ("table_container", app.table_container),
                 ("label_ranking_notice", app.label_ranking_notice),

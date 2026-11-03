@@ -5,8 +5,15 @@ import csv
 
 from openpyxl import load_workbook
 
-from google_scholar_scraper.exporters import EXPORT_COLUMNS, save_to_csv, save_to_excel
-from google_scholar_scraper.models import Article
+from google_scholar_scraper.enrichment import SCHOLAR_AUTHORS_WARNING, UNRESOLVED_WARNING
+from google_scholar_scraper.exporters import (
+    EXPORT_COLUMNS,
+    save_to_bibtex,
+    save_to_csv,
+    save_to_excel,
+    save_to_ris,
+)
+from google_scholar_scraper.models import Article, CitationRecord
 
 
 class ExporterTests(unittest.TestCase):
@@ -177,6 +184,184 @@ class ExporterTests(unittest.TestCase):
             rows = list(load_workbook(path).active.iter_rows(values_only=True))
 
         self.assertEqual(rows[1][0], "'=1+1")
+
+
+class BibTeXWriterTests(unittest.TestCase):
+    def test_verified_record_renders_full_entry(self) -> None:
+        record = CitationRecord(
+            title="Deep learning",
+            authors=("Yann LeCun", "Yoshua Bengio", "Geoffrey Hinton"),
+            year=2015,
+            container="Nature",
+            entry_type="journal-article",
+            doi="10.1038/nature14539",
+            issns=("0028-0836", "1476-4687"),
+            volume="521",
+            issue="7553",
+            pages="436-444",
+            publisher="Springer",
+            url="https://doi.org/10.1038/nature14539",
+            source="crossref",
+            verified=True,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "citations.bib"
+
+            save_to_bibtex([record], path)
+            text = path.read_text(encoding="utf-8")
+
+        self.assertIn("@article{lecun_deep_2015,", text)
+        self.assertIn("author = {Yann LeCun and Yoshua Bengio and Geoffrey Hinton},", text)
+        self.assertIn("title = {{Deep learning}},", text)
+        self.assertIn("journal = {Nature},", text)
+        self.assertIn("year = {2015},", text)
+        self.assertIn("volume = {521},", text)
+        self.assertIn("number = {7553},", text)
+        self.assertIn("pages = {436-444},", text)
+        self.assertIn("doi = {10.1038/nature14539},", text)
+        self.assertIn("issn = {0028-0836, 1476-4687},", text)
+        self.assertNotIn("note =", text)
+        self.assertNotIn("booktitle", text)
+
+    def test_specials_escaped_and_title_double_braced(self) -> None:
+        record = CitationRecord(
+            title="Escaping {Braces} & 100% of _Cases_",
+            container="Proceedings & Notes",
+            entry_type="proceedings-article",
+            year=2023,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "citations.bib"
+
+            save_to_bibtex([record], path)
+            text = path.read_text(encoding="utf-8")
+
+        self.assertIn("@inproceedings{anon_escaping_2023,", text)
+        self.assertIn("title = {{Escaping \\{Braces\\} \\& 100\\% of \\_Cases\\_}},", text)
+        self.assertIn("booktitle = {Proceedings \\& Notes},", text)
+        self.assertNotIn("author =", text)
+
+    def test_duplicate_titles_get_unique_keys(self) -> None:
+        records = [
+            CitationRecord(title="Learning Deep Things", year=2020),
+            CitationRecord(title="Learning Deep Things", year=2020),
+            CitationRecord(title="Learning Deep Things", year=2020),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "citations.bib"
+
+            save_to_bibtex(records, path)
+            text = path.read_text(encoding="utf-8")
+
+        self.assertIn("@misc{anon_learning_2020,", text)
+        self.assertIn("@misc{anon_learning_2020-2,", text)
+        self.assertIn("@misc{anon_learning_2020-3,", text)
+
+    def test_unresolved_record_has_no_author_and_carries_the_review_note(self) -> None:
+        record = CitationRecord(
+            title="An Unresolved Paper",
+            year=2024,
+            source="scholar",
+            fallback_authors_line="A Author, B Author - Journal of Examples, 2024 - publisher.example",
+            warnings=(UNRESOLVED_WARNING, SCHOLAR_AUTHORS_WARNING),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "citations.bib"
+
+            save_to_bibtex([record], path)
+            text = path.read_text(encoding="utf-8")
+
+        self.assertNotIn("author =", text)
+        self.assertIn("note = {A Author, B Author - Journal of Examples, 2024 - publisher.example; ", text)
+        self.assertIn(UNRESOLVED_WARNING, text)
+        self.assertIn(SCHOLAR_AUTHORS_WARNING, text)
+
+    def test_values_are_single_lined(self) -> None:
+        record = CitationRecord(title="Broken\nTitle\r\nHere")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "citations.bib"
+
+            save_to_bibtex([record], path)
+            text = path.read_text(encoding="utf-8")
+
+        self.assertIn("title = {{Broken Title Here}},", text)
+
+
+class RISWriterTests(unittest.TestCase):
+    def test_verified_journal_record_frames_and_fields(self) -> None:
+        record = CitationRecord(
+            title="Deep learning",
+            authors=("Yann LeCun", "Yoshua Bengio"),
+            year=2015,
+            container="Nature",
+            entry_type="journal-article",
+            doi="10.1038/nature14539",
+            issns=("0028-0836",),
+            pages="436-444",
+            publisher="Springer",
+            url="https://doi.org/10.1038/nature14539",
+            source="crossref",
+            verified=True,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "citations.ris"
+
+            save_to_ris([record], path)
+            raw = path.read_bytes()
+
+        self.assertFalse(raw.startswith(b"\xef\xbb\xbf"))
+        text = raw.decode("utf-8")
+        self.assertIn("TY  - JOUR", text)
+        self.assertIn("AU  - LeCun, Yann", text)
+        self.assertIn("AU  - Bengio, Yoshua", text)
+        self.assertIn("TI  - Deep learning", text)
+        self.assertIn("T2  - Nature", text)
+        self.assertIn("PY  - 2015", text)
+        self.assertIn("SP  - 436", text)
+        self.assertIn("EP  - 444", text)
+        self.assertIn("DO  - 10.1038/nature14539", text)
+        self.assertIn("UR  - https://doi.org/10.1038/nature14539", text)
+        self.assertIn("SN  - 0028-0836", text)
+        self.assertIn("PB  - Springer", text)
+        self.assertTrue(text.rstrip("\r\n").endswith("ER  - "))
+        self.assertIn("\r\n", text)
+
+    def test_proceedings_maps_to_conf_and_open_page_range_stays_in_sp(self) -> None:
+        record = CitationRecord(
+            title="A Conference Paper",
+            container="Conference on Examples",
+            entry_type="proceedings-article",
+            year=2023,
+            pages="1007",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "citations.ris"
+
+            save_to_ris([record], path)
+            text = path.read_text(encoding="utf-8")
+
+        self.assertIn("TY  - CONF", text)
+        self.assertIn("SP  - 1007", text)
+        self.assertNotIn("EP  - ", text)
+
+    def test_unresolved_record_has_no_au_and_carries_the_note(self) -> None:
+        record = CitationRecord(
+            title="An Unresolved Paper",
+            source="scholar",
+            fallback_authors_line="A Author, B Author - Journal of Examples, 2024 - publisher.example",
+            warnings=(UNRESOLVED_WARNING, SCHOLAR_AUTHORS_WARNING),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "citations.ris"
+
+            save_to_ris([record], path)
+            text = path.read_text(encoding="utf-8")
+
+        self.assertIn("TY  - GEN", text)
+        self.assertNotIn("AU  - ", text)
+        self.assertIn("N1  - A Author, B Author - Journal of Examples, 2024 - publisher.example | ", text)
+        self.assertIn(UNRESOLVED_WARNING, text)
+        self.assertIn(SCHOLAR_AUTHORS_WARNING, text)
 
 
 if __name__ == "__main__":

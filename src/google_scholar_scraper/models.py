@@ -129,6 +129,35 @@ class Article:
         }
 
 
+@dataclass(frozen=True)
+class CitationRecord:
+    """An export-only citation record for one article.
+
+    ``authors`` holds verified structured names ("Given Family", in deposit order)
+    or stays empty; the raw Google Scholar author display line is never parsed into
+    it. ``fallback_authors_line`` preserves that display line verbatim for a note,
+    and ``warnings`` carry explicit review notices. Citation export is independent
+    of PDF availability: no PDF field is consulted or written here.
+    """
+
+    title: str
+    authors: tuple[str, ...] = ()
+    year: int | None = None
+    container: str = ""
+    entry_type: str = ""
+    doi: str = ""
+    issns: tuple[str, ...] = ()
+    volume: str = ""
+    issue: str = ""
+    pages: str = ""
+    publisher: str = ""
+    url: str = ""
+    source: str = ""
+    verified: bool = False
+    fallback_authors_line: str = ""
+    warnings: tuple[str, ...] = ()
+
+
 class ExtractionStatus(str, Enum):
     SUCCESS = "SUCCESS"
     PARTIAL_SUCCESS = "PARTIAL_SUCCESS"
