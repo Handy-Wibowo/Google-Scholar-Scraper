@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.2.2
+
+Normal release of the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+published at the
+[v2.2.2 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v2.2.2)
+after fresh CI and Windows installer checks pass on the release commit. Windows
+installer, portable ZIP, and `SHA256SUMS.txt` are the release assets.
+
+### Added
+
+- BibTeX (`.bib`) and RIS (`.ris`) citation export for one paper, the selected rows, the
+  visible (filtered) rows, or all collected records, importable into Zotero and Mendeley.
+- Citation records are resolved against Crossref where possible; unresolved records are
+  still exported with the fields already known and an explicit review note. The Google
+  Scholar citation line is never parsed into authors.
+- `Export citations` sits grouped with the Excel and CSV export buttons in the results
+  filter row (a `File → Export citations…` item and `Ctrl+E` remain as secondary paths).
+
+### Fixed
+
+- The export button cluster is relabelled (`Excel`, `CSV`, `Citations`) so all three fit
+  the minimum supported window without clipping the applied-year range.
+
 ## 2.2.1
 
 Normal release of the
