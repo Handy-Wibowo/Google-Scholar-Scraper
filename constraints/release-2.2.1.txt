@@ -1,0 +1,22 @@
+# Exact dependency set used for the V2.2.0 release build gate.
+# Identical pins to constraints/release-2.0.1.txt: V2.2.0 adds no dependency and
+# upgrades no version.
+# Runtime dependencies
+beautifulsoup4==4.14.3
+certifi==2025.11.12
+charset-normalizer==3.4.4
+et-xmlfile==2.0.0
+idna==3.15
+openpyxl==3.1.5
+requests==2.33.0
+soupsieve==2.8.1
+typing-extensions==4.15.0
+urllib3==2.7.0
+
+# Build dependencies
+altgraph==0.17.5
+packaging==25.0
+pefile==2024.8.26
+pyinstaller==6.20.0
+pyinstaller-hooks-contrib==2026.4
+pywin32-ctypes==0.2.3

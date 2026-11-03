@@ -9,17 +9,17 @@ attaching journal ranking and public-PDF metadata, and exporting reviewed result
 to Excel or CSV. It is source-available for noncommercial use under the PolyForm
 Noncommercial License 1.0.0, with separate commercial licensing available.
 
-![Version](https://img.shields.io/badge/version-2.2.0-blue)
-![Latest Release](https://img.shields.io/badge/latest%20release-2.2.0-blue)
+![Version](https://img.shields.io/badge/version-2.2.1-blue)
+![Latest Release](https://img.shields.io/badge/latest%20release-2.2.1-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 [![CI](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/actions/workflows/ci.yml/badge.svg)](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/actions/workflows/ci.yml)
 [![Windows Build](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/actions/workflows/build-windows.yml/badge.svg)](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/actions/workflows/build-windows.yml)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-lightgrey)
 
-> **V2.2.0 is the current normal release of the
+> **V2.2.1 is the current normal release of the
 > [Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper).**
 > The release ships a Windows installer, portable ZIP, and `SHA256SUMS.txt` at the
-> [v2.2.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v2.2.0).
+> [v2.2.1 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v2.2.1).
 > The tag and assets are published after fresh CI and Windows installer checks pass
 > on the release commit. V2.0.1 remains the newest published release from the
 > upstream repository [MahdiNavaei/Google-Scholar-Scraper](https://github.com/MahdiNavaei/Google-Scholar-Scraper)
@@ -29,7 +29,7 @@ Noncommercial License 1.0.0, with separate commercial licensing available.
 
 ![Google Scholar Scraper V2.0.0 desktop interface (legacy screenshot)](docs/assets/google-scholar-scraper-v2.png)
 
-*Illustrative legacy V2.0.0 interface. Current V2.2.0 year-filter, journal-ranking, and public-PDF controls are described below.*
+*Illustrative legacy V2.0.0 interface. Current V2.2.1 year-filter, journal-ranking, and public-PDF controls are described below.*
 
 Google Scholar Scraper is not affiliated with Google. It does not solve CAPTCHA,
 bypass access controls, rotate proxies, use account credentials, or use stealth
@@ -103,7 +103,7 @@ results remain possible; filtering does not prove corpus completeness.
 
 ## Journal Rankings And Public PDFs
 
-V2.2.0 can attach two kinds of extra metadata to each reviewed result: a journal
+V2.2.1 can attach two kinds of extra metadata to each reviewed result: a journal
 ranking label, and the state of a public PDF copy. Both are additive review aids;
 neither changes what was extracted from Google Scholar.
 
@@ -217,15 +217,48 @@ The UI remains responsive while extraction, metadata checks, and downloads run.
 
 ## Installation Options
 
-V2.2.0 is the current normal release of the fork. The release assets — Windows
+V2.2.1 is the current normal release of the fork. The release assets — Windows
 installer, portable ZIP, and `SHA256SUMS.txt` — are published at the
-[v2.2.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v2.2.0)
+[v2.2.1 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v2.2.1)
 after fresh CI and Windows installer checks pass on the release commit. You can
-also run V2.2.0 from source or build the Windows artifacts locally yourself.
+also run V2.2.1 from source or build the Windows artifacts locally yourself.
 
-### Published Release: V2.2.0
+### Published Release: V2.2.1
 
-The current release is V2.2.0 from the fork
+The current release is V2.2.1 from the fork
+[Handy-Wibowo/Google-Scholar-Scraper](https://github.com/Handy-Wibowo/Google-Scholar-Scraper).
+It includes the publication-year, journal-ranking, and public-PDF features.
+
+- [Windows Installer](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/download/v2.2.1/Google-Scholar-Scraper-v2.2.1-Setup-Windows-x64.exe)
+- [Portable Windows ZIP](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/download/v2.2.1/Google-Scholar-Scraper-v2.2.1-Portable-Windows-x64.zip)
+- [SHA-256 checksums](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/download/v2.2.1/SHA256SUMS.txt)
+- [V2.2.1 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v2.2.1)
+
+Verify each downloaded artifact against `SHA256SUMS.txt` before running it. To
+produce the portable ZIP and installer yourself instead, see
+[Building Windows Artifacts](#building-windows-artifacts).
+
+### Portable Windows ZIP (V2.2.1)
+
+1. Download the portable ZIP from the V2.2.1 release.
+2. Verify the ZIP against `SHA256SUMS.txt`.
+3. Extract the ZIP.
+4. Run `GoogleScholarScraper.exe` from the extracted folder.
+
+The portable build does not require a source checkout.
+
+### Windows Installer (V2.2.1)
+
+1. Download the installer from the V2.2.1 release.
+2. Verify the installer against `SHA256SUMS.txt`.
+3. Run the installer.
+4. Launch it from the Start Menu or optional desktop shortcut.
+
+The installer is built with Inno Setup and installs per user.
+
+### Historical Fork Release: V2.2.0
+
+V2.2.0 is the previous published release from the fork
 [Handy-Wibowo/Google-Scholar-Scraper](https://github.com/Handy-Wibowo/Google-Scholar-Scraper).
 It includes the publication-year, journal-ranking, and public-PDF features.
 
@@ -233,28 +266,6 @@ It includes the publication-year, journal-ranking, and public-PDF features.
 - [Portable Windows ZIP](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/download/v2.2.0/Google-Scholar-Scraper-v2.2.0-Portable-Windows-x64.zip)
 - [SHA-256 checksums](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/download/v2.2.0/SHA256SUMS.txt)
 - [V2.2.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v2.2.0)
-
-Verify each downloaded artifact against `SHA256SUMS.txt` before running it. To
-produce the portable ZIP and installer yourself instead, see
-[Building Windows Artifacts](#building-windows-artifacts).
-
-### Portable Windows ZIP (V2.2.0)
-
-1. Download the portable ZIP from the V2.2.0 release.
-2. Verify the ZIP against `SHA256SUMS.txt`.
-3. Extract the ZIP.
-4. Run `GoogleScholarScraper.exe` from the extracted folder.
-
-The portable build does not require a source checkout.
-
-### Windows Installer (V2.2.0)
-
-1. Download the installer from the V2.2.0 release.
-2. Verify the installer against `SHA256SUMS.txt`.
-3. Run the installer.
-4. Launch it from the Start Menu or optional desktop shortcut.
-
-The installer is built with Inno Setup and installs per user.
 
 ### Historical Upstream Release: V2.0.1
 
@@ -360,7 +371,7 @@ python -m pip install -e .
 Optional build dependency:
 
 ```powershell
-python -m pip install -c constraints\release-2.2.0.txt pyinstaller
+python -m pip install -c constraints\release-2.2.1.txt pyinstaller
 ```
 
 Run the deterministic test suite:
@@ -383,7 +394,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_windows.ps1
 The script removes only known generated outputs (`build/` and `dist/`) before
 building, then creates:
 
-- PyInstaller `onedir` application under `dist/Google-Scholar-Scraper-v2.2.0/`
+- PyInstaller `onedir` application under `dist/Google-Scholar-Scraper-v2.2.1/`
 - Portable ZIP under `dist/release/`
 - `SHA256SUMS.txt`
 
@@ -431,28 +442,31 @@ constraints/              Exact release-build dependency constraints
 docs/                     Release and audit documentation
 ```
 
-`constraints/release-2.2.0.txt` reuses the V2.0.1 runtime and build pins verbatim:
-V2.2.0 adds no dependency and upgrades no version. The V2.0.1 constraints file is
-retained unchanged as the historical record for that release.
+`constraints/release-2.2.1.txt` reuses the V2.2.0 runtime and build pins verbatim:
+V2.2.1 adds no dependency and upgrades no version. The V2.2.0 and V2.0.1
+constraints files are retained unchanged as historical records for those releases.
 
 ## Release And Documentation
 
 Release status:
 
-- **V2.2.0 — current normal release** of the fork
+- **V2.2.1 — current normal release** of the fork
   [Handy-Wibowo/Google-Scholar-Scraper](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
   published at the
-  [v2.2.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v2.2.0)
-  after fresh CI and Windows installer checks pass on the release commit. The
-  year-filter, journal-ranking, and public-PDF work developed on
-  [`feature/scholar-year-filters`](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/tree/feature/scholar-year-filters)
-  ships in this release.
+  [v2.2.1 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v2.2.1)
+  after fresh CI and Windows installer checks pass on the release commit. It
+  retains the year-filter, journal-ranking, and public-PDF work released in
+  V2.2.0 and adds the public-PDF verification and enrichment fixes described in
+  the V2.2.1 release notes.
+- **V2.2.0 — previous published fork release**, published at the
+  [v2.2.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v2.2.0).
 - **V2.0.1 — newest published upstream release**, from the upstream repository
   [MahdiNavaei/Google-Scholar-Scraper](https://github.com/MahdiNavaei/Google-Scholar-Scraper).
 - **V2.0.0 — previous published release.**
 
 Documents:
 
+- [V2.2.1 release notes](docs/RELEASE_NOTES_V2.2.1.md)
 - [V2.2.0 release notes](docs/RELEASE_NOTES_V2.2.0.md)
 - [V2.0.1 release notes](docs/RELEASE_NOTES_V2.0.1.md)
 - [V2.0.0 release notes](docs/RELEASE_NOTES_V2.0.0.md)

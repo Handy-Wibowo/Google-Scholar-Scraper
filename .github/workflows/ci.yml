@@ -22,7 +22,7 @@ jobs:
       - name: Install project from metadata
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -c constraints/release-2.2.0.txt .
+          python -m pip install -c constraints/release-2.2.1.txt .
 
       - name: Compile source and tests
         run: python -m compileall prog.py src tests
