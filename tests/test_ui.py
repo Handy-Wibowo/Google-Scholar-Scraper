@@ -1330,8 +1330,15 @@ class CitationsMenuTests(unittest.TestCase):
         window = MainWindow()
         try:
             menubar = window.menubar
-            self.assertEqual(menubar.type(0), "cascade")
-            self.assertEqual(menubar.entrycget(0, "label"), "File")
+            # tk.Menu reserves entry 0 for the tearoff on some platforms; find the
+            # File cascade by label instead of a positional index.
+            labels = {
+                index: menubar.entrycget(index, "label")
+                for index in range(0, menubar.index("end") + 1)
+            }
+            file_positions = [i for i, label in labels.items() if label == "File"]
+            self.assertEqual(len(file_positions), 1)
+            self.assertEqual(menubar.type(file_positions[0]), "cascade")
             file_menu = window.menu_file
             self.assertEqual(file_menu.entrycget(0, "label"), "Export citations…")
             # An empty window starts with no visible results, so the item starts
