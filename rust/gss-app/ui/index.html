@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Google Scholar Scraper v3.1.0</title>
+  <title>Google Scholar Scraper v3.2.0</title>
   <style>
     :root {
       --app-bg: #f3f6fb; --surface: #ffffff; --surface-alt: #f8fafc;
@@ -133,6 +133,34 @@
     dialog::backdrop { background: rgba(17, 24, 39, 0.35); }
     dialog h3 { margin: 0 0 10px; font-size: 14px; }
     dialog .disclaimer { color: var(--muted); font-size: 11px; margin: 8px 0; }
+    /* v3.2.0 UX */
+    :focus-visible {
+      outline: 2px solid var(--primary); outline-offset: 1px; border-radius: 3px;
+    }
+    tbody tr:focus-visible {
+      outline: none; box-shadow: inset 0 0 0 2px var(--primary);
+    }
+    #resultsTable { table-layout: fixed; }
+    #resultsTable td {
+      max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #resultsTable.compact tbody td { padding: 2px 8px; font-size: 11px; }
+    .linkbtn {
+      background: none; border: none; padding: 0; color: var(--primary);
+      text-decoration: underline; cursor: pointer; font: inherit;
+    }
+    .linkbtn:hover:not(:disabled) { filter: brightness(0.85); }
+    #configPanel.collapsed .row { display: none; }
+    .panel-head {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+    }
+    .panel-head button {
+      background: transparent; border: none; padding: 0 4px; font-weight: 600;
+    }
+    .menu label { display: flex; gap: 6px; padding: 4px 8px; }
+    .menu label:hover { background: var(--selection); }
+    .toolbar-group { display: flex; align-items: center; gap: 6px; }
+    .toolbar-group label { display: flex; align-items: center; gap: 4px; }
     dialog pre {
       background: var(--surface-alt); border: 1px solid var(--border);
       border-radius: 4px; padding: 10px; white-space: pre-wrap;
@@ -151,17 +179,22 @@
 
   <div class="header">
     <div class="titles">
-      <h1>Google Scholar Scraper v3.1.0</h1>
+      <h1>Google Scholar Scraper v3.2.0</h1>
       <div class="subtitle">Search, rank, review, and export Scholar results.</div>
     </div>
     <button id="btnCancel" disabled>Cancel</button>
     <button id="btnSearch" class="primary">Search Scholar</button>
   </div>
 
-  <div class="panel">
+  <section class="panel" id="configPanel">
+    <div class="panel-head">
+      <button id="btnToggleConfig" aria-expanded="true" aria-controls="configPanel">Filters \u25be</button>
+      <span class="notice" id="configHint">Search setup, ranking file, and year range.</span>
+    </div>
     <div class="row">
       <label for="query">Query</label>
-      <input type="text" id="query" style="flex:1" />
+      <input type="text" id="query" style="flex:1" list="queryHistory" />
+      <datalist id="queryHistory"></datalist>
       <label for="pages">Pages</label>
       <input type="text" id="pages" class="small" value="1" />
     </div>
@@ -189,14 +222,15 @@
       <label for="yearTo">To</label>
       <input type="text" id="yearTo" class="small" />
     </div>
-  </div>
+  </section>
 
-  <div class="panel status ready" id="statusPanel">
+  <div class="panel status ready" id="statusPanel" role="status" aria-live="polite">
     <div>
       <div class="heading" id="statusHeading">Ready</div>
       <div class="detail" id="statusDetail">Enter a query, choose pages, then start a search.</div>
     </div>
     <progress id="progress" value="0" max="100"></progress>
+    <button id="btnRetry" hidden>Retry search</button>
   </div>
 
   <div class="results">
@@ -215,23 +249,47 @@
       <select id="pdfFilter"></select>
       <span id="appliedYear">Years: any time</span>
       <span class="spacer"></span>
-      <button id="btnExportExcel" disabled>Excel</button>
-      <button id="btnExportCsv" disabled>CSV</button>
+      <span class="toolbar-group">
+        <label for="exportScope">Export</label>
+        <select id="exportScope">
+          <option value="visible">Visible (filtered) rows</option>
+          <option value="selected">Selected rows</option>
+        </select>
+      </span>
+      <button id="btnColumns">Columns</button>
+      <div class="menu" id="columnsMenu">
+        <label><input type="checkbox" data-col="authors" checked /> Authors</label>
+        <label><input type="checkbox" data-col="score" checked /> Relevance</label>
+        <label><input type="checkbox" data-col="rank" checked /> Rank</label>
+        <label><input type="checkbox" data-col="pdf" checked /> PDF</label>
+        <label><input type="checkbox" data-col="link" checked /> Link</label>
+      </div>
+      <label class="notice"><input type="checkbox" id="compactRows" /> Compact</label>
+      <button id="btnExportExcel" disabled title="Export visible (filtered) rows">Excel (visible)</button>
+      <button id="btnExportCsv" disabled title="Export visible (filtered) rows">CSV (visible)</button>
       <button id="btnExportCitations" disabled>Citations</button>
     </div>
     <div class="table-wrap" id="tableWrap">
-      <table id="resultsTable">
+      <table id="resultsTable" tabindex="0" role="grid" aria-label="Search results">
+        <colgroup>
+          <col data-col="title" style="width:34%" />
+          <col data-col="authors" style="width:26%" />
+          <col data-col="score" style="width:7%" />
+          <col data-col="rank" style="width:10%" />
+          <col data-col="pdf" style="width:11%" />
+          <col data-col="link" style="width:12%" />
+        </colgroup>
         <thead>
           <tr>
-            <th class="sortable" data-key="title" title="Sort by title">Title</th>
-            <th class="sortable" data-key="authors" title="Sort by authors">Authors</th>
-            <th class="sortable" data-key="score" title="Sort by relevance score">Rel.</th>
-            <th class="sortable" data-key="rank" title="Sort by journal rank">Rank</th>
-            <th class="sortable" data-key="pdf" title="Sort by public-PDF status">PDF</th>
-            <th class="sortable" data-key="link" title="Sort by link presence">Link</th>
+            <th class="sortable" data-key="title" scope="col" aria-sort="none" title="Sort by title">Title</th>
+            <th class="sortable" data-key="authors" scope="col" aria-sort="none" title="Sort by authors">Authors</th>
+            <th class="sortable" data-key="score" scope="col" aria-sort="none" title="Sort by relevance score">Rel.</th>
+            <th class="sortable" data-key="rank" scope="col" aria-sort="none" title="Sort by journal rank">Rank</th>
+            <th class="sortable" data-key="pdf" scope="col" aria-sort="none" title="Sort by public-PDF status">PDF</th>
+            <th class="sortable" data-key="link" scope="col" aria-sort="none" title="Sort by link presence">Link</th>
           </tr>
         </thead>
-        <tbody id="tableBody"></tbody>
+        <tbody id="tableBody" role="rowgroup"></tbody>
       </table>
     </div>
     <div class="empty" id="emptyState">
@@ -250,7 +308,14 @@
     <h3>Selected paper details</h3>
     <pre id="detailText"></pre>
     <div class="disclaimer">Double-click a row to open its link. Ranking labels describe the journal only.</div>
-    <button id="btnCloseDetail">Close</button>
+    <div class="row">
+      <button id="btnDetailOpenLink">Open link</button>
+      <button id="btnDetailOpenPdf">Open PDF</button>
+      <button id="btnDetailCopyDoi">Copy DOI</button>
+      <button id="btnDetailCopyTitle">Copy title</button>
+      <span class="spacer"></span>
+      <button id="btnCloseDetail">Close</button>
+    </div>
   </dialog>
 
   <dialog id="citationsDialog">

@@ -71,6 +71,14 @@ let sortDir = 1; // 1 ascending, -1 descending
 let resultsQuery = ""; // session-only free-text filter
 let lastExportFolder = ""; // for the "Open folder" button
 let ctxTarget = null; // stored index of the row context menu
+let focusRow = -1; // stored index of the keyboard-focused grid row
+let anchorRow = -1; // shift-range anchor for the grid
+let lastRequest = null; // snapshot of the last accepted search
+let detailIndex = -1; // record shown in the details dialog
+let queryHistory = []; // recent successful queries, newest first
+let historyCursor = -1; // recall position inside queryHistory
+let hiddenColumns = new Set(); // column keys hidden by the Columns menu
+const ALL_COLUMNS = ["title", "authors", "score", "rank", "pdf", "link"];
 
 const $ = (id) => document.getElementById(id);
 
@@ -130,6 +138,30 @@ function init() {
     scheduleSave();
   };
   $("tableBody").onclick = onTableClick;
+  $("resultsTable").addEventListener("keydown", onTableKeyDown);
+  $("resultsTable").addEventListener("focus", () => {
+    if (focusRow === -1) { const ids = visibleIndices(); if (ids.length) { focusRow = ids[0]; renderResults(); focusGridRow(); } }
+  });
+  $("btnRetry").onclick = retryLastSearch;
+  $("btnToggleConfig").onclick = () => toggleConfig();
+  $("exportScope").onchange = () => renderResults();
+  $("compactRows").onchange = () => { applyDensity(); scheduleSave(); };
+  $("btnColumns").onclick = (e) => {
+    e.stopPropagation();
+    toggleMenu("columnsMenu", "btnColumns", !$("columnsMenu").classList.contains("open"));
+  };
+  for (const box of document.querySelectorAll("#columnsMenu input[data-col]")) {
+    box.onchange = () => {
+      const key = box.dataset.col;
+      if (box.checked) hiddenColumns.delete(key); else hiddenColumns.add(key);
+      renderResults();
+      scheduleSave();
+    };
+  }
+  $("btnDetailOpenLink").onclick = () => { const a = storedArticles[detailIndex]; if (a) openRecordLink(a); };
+  $("btnDetailOpenPdf").onclick = () => { const a = storedArticles[detailIndex]; if (a) revealRecordPdf(a); };
+  $("btnDetailCopyDoi").onclick = () => { const a = storedArticles[detailIndex]; if (a) copyText(a.doi || ""); };
+  $("btnDetailCopyTitle").onclick = () => { const a = storedArticles[detailIndex]; if (a) copyText(a.title || ""); };
   $("tableBody").ondblclick = onTableDblClick;
   $("tableBody").oncontextmenu = onTableContextMenu;
   $("btnReveal").onclick = () => {
@@ -182,7 +214,16 @@ function onKeyDown(e) {
       e.preventDefault();
       return;
     }
-    if (running) cancelOperation();
+    if (running) {
+      cancelOperation();
+      return;
+    }
+    // Nothing else to dismiss: Escape drops the selection.
+    if (selection.size > 0) {
+      selection.clear();
+      renderResults();
+      e.preventDefault();
+    }
     return;
   }
   if (running) return;
@@ -191,19 +232,112 @@ function onKeyDown(e) {
     openCitationsDialog();
     return;
   }
-  if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === "a" && !inField) {
+  if (e.ctrlKey && !e.altKey && e.shiftKey && e.key.toLowerCase() === "a") {
+    e.preventDefault();
+    selection.clear();
+    renderResults();
+    return;
+  }
+  if (e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "a" && !inField) {
     e.preventDefault();
     for (const [i] of visibleArticles()) selection.add(i);
     renderResults();
     return;
   }
-  if (e.key === "Enter") {
+  // Arrow recall in an empty query field.
+  if (active === $("query") && !$("query").value.trim() && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+    if (queryHistory.length > 0) {
+      e.preventDefault();
+      if (e.key === "ArrowUp") historyCursor = Math.min(historyCursor + 1, queryHistory.length - 1);
+      else historyCursor = Math.max(historyCursor - 1, 0);
+      $("query").value = queryHistory[historyCursor] || "";
+    }
+    return;
+  }
+  if (e.key === "Enter" && !e.shiftKey) {
     // Deliberately narrower than the Python global binding: years and the
     // query start a search, but typing in pages/folder/ranking fields does not.
     if (active === $("query") || active === $("yearFrom") || active === $("yearTo")) {
       startSearch();
     }
   }
+}
+
+// ---- keyboard navigation over the results grid ----
+function visibleIndices() {
+  return visibleArticles().map(([i]) => i);
+}
+
+function moveFocus(delta) {
+  const ids = visibleIndices();
+  if (ids.length === 0) return;
+  const at = ids.indexOf(focusRow);
+  const next = at === -1
+    ? (delta > 0 ? 0 : ids.length - 1)
+    : Math.min(Math.max(at + delta, 0), ids.length - 1);
+  focusRow = ids[next];
+  renderResults();
+  focusGridRow();
+}
+
+function focusGridRow() {
+  const tr = document.querySelector(`#tableBody tr[data-iid="article-${focusRow}"]`);
+  if (tr) tr.focus();
+}
+
+function onTableKeyDown(e) {
+  const ids = visibleIndices();
+  if (ids.length === 0) return;
+  switch (e.key) {
+    case "ArrowDown":
+      e.preventDefault();
+      if (e.shiftKey) extendSelection(1);
+      else { moveFocus(1); anchorRow = focusRow; }
+      break;
+    case "ArrowUp":
+      e.preventDefault();
+      if (e.shiftKey) extendSelection(-1);
+      else { moveFocus(-1); anchorRow = focusRow; }
+      break;
+    case "Home":
+      e.preventDefault();
+      focusRow = ids[0]; anchorRow = focusRow; renderResults(); focusGridRow();
+      break;
+    case "End":
+      e.preventDefault();
+      focusRow = ids[ids.length - 1]; anchorRow = focusRow; renderResults(); focusGridRow();
+      break;
+    case " ":
+    case "Spacebar":
+      if (focusRow === -1) return;
+      e.preventDefault();
+      if (selection.has(focusRow)) selection.delete(focusRow);
+      else selection.add(focusRow);
+      renderResults();
+      focusGridRow();
+      break;
+    case "Enter":
+      if (focusRow !== -1) {
+        e.preventDefault();
+        openDetailFor(focusRow);
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+function extendSelection(delta) {
+  const ids = visibleIndices();
+  if (anchorRow === -1) anchorRow = focusRow === -1 ? ids[0] : focusRow;
+  const from = ids.indexOf(anchorRow);
+  const to = Math.min(Math.max((focusRow === -1 ? from : ids.indexOf(focusRow)) + delta, 0), ids.length - 1);
+  if (from === -1) return;
+  const [lo, hi] = from <= to ? [from, to] : [to, from];
+  for (let k = lo; k <= hi; k++) selection.add(ids[k]);
+  focusRow = ids[to];
+  renderResults();
+  focusGridRow();
 }
 
 // ---- menus ----
@@ -240,6 +374,7 @@ function onHeaderClick(key) {
     sortDir = 1;
   }
   renderResults();
+  scheduleSave();
 }
 
 function sortValue(a, key) {
@@ -351,6 +486,7 @@ function setIdleState() {
   $("menuExportCitations").disabled = !hasVisible;
   $("menuOpenFolder").disabled = !lastExportFolder;
   $("btnReveal").hidden = !lastExportFolder;
+  syncColumnCheckboxes();
   $("query").disabled = false;
   $("pages").disabled = false;
   $("folder").disabled = false;
@@ -390,15 +526,17 @@ async function startSearch() {
     return;
   }
   const { from, to } = currentYearBounds();
+  const request = {
+    query: $("query").value,
+    pages: pagesValue,
+    rankingEnabled: $("rankingEnabled").checked,
+    outputFolder: $("folder").value,
+    yearFrom: from,
+    yearTo: to,
+  };
+  lastRequest = { ...request };
   try {
-    await invoke("search_scholar", {
-      query: $("query").value,
-      pages: pagesValue,
-      rankingEnabled: $("rankingEnabled").checked,
-      outputFolder: $("folder").value,
-      yearFrom: from,
-      yearTo: to,
-    });
+    await invoke("search_scholar", request);
   } catch (err) {
     // Validation errors: inline status, no dialog (matches Python).
     setStatus("Check search setup", String(err), "error");
@@ -546,7 +684,12 @@ async function startCitationExport() {
 
 // ---- spreadsheet exports (synchronous on the UI thread) ----
 async function exportSpreadsheet(kind) {
-  const visible = visibleArticles().map(([, a]) => a);
+  // Scope mirrors the citations dialog: visible (filtered) rows, or the rows the
+  // user selected — the button labels now say which is which.
+  const scope = $("exportScope").value || "visible";
+  const visible = scope === "selected"
+    ? [...selection].map((i) => storedArticles[i]).filter(Boolean)
+    : visibleArticles().map(([, a]) => a);
   if (visible.length === 0) {
     setStatus("Ready", "No results to export.", "ready");
     return;
@@ -603,7 +746,11 @@ function renderResults() {
   for (const [index, a] of rows) {
     const tr = document.createElement("tr");
     tr.dataset.iid = `article-${index}`;
+    tr.tabIndex = -1;
+    tr.setAttribute("role", "row");
+    tr.setAttribute("aria-selected", selection.has(index) ? "true" : "false");
     if (previousSelection.has(index)) tr.classList.add("selected");
+    if (index === focusRow) tr.classList.add("focused");
     const title = a.title ?? "";
     const authors = a.authors ?? "";
     const score = a.relevanceScore ?? a.relevance_score;
@@ -611,14 +758,37 @@ function renderResults() {
     const rank = [a.sjrQuartile ?? a.sjr_quartile, a.sintaRank ?? a.sinta_rank]
       .filter(Boolean).join(" / ");
     const status = a.pdfStatus ?? a.pdf_status;
-    const localPath = a.pdfLocalPath ?? a.pdf_local_path;
-    const pdf = status === "available" ? (localPath ? "Downloaded" : "Public PDF")
-      : status === "unavailable" ? "No public PDF" : "Unknown";
+    const localPath = a.pdfLocalPath ?? a.local_path ?? a.pdf_local_path;
+    const pdfUrl = a.pdfUrl ?? a.pdf_url ?? "";
     const link = a.link ?? "";
-    const linkText = link ? "Open link" : "No link";
-    for (const text of [title, authors, scoreText, rank, pdf, linkText]) {
+    const cells = [
+      ["title", title, null],
+      ["authors", authors, null],
+      ["score", scoreText, null],
+      ["rank", rank, null],
+      ["pdf", status === "available" ? (localPath ? "Downloaded" : "Public PDF")
+        : status === "unavailable" ? "No public PDF" : "Unknown",
+        localPath ? { action: "reveal-pdf", value: localPath, label: "Downloaded" }
+          : pdfUrl ? { action: "open-pdf", value: pdfUrl, label: "Public PDF" } : null],
+      ["link", link ? "Open link" : "No link",
+        link ? { action: "open-link", value: link, label: "Open link" } : null],
+    ];
+    for (const [key, text, action] of cells) {
+      if (hiddenColumns.has(key)) continue;
       const td = document.createElement("td");
-      td.textContent = text;
+      td.dataset.col = key;
+      td.title = text; // full value survives truncation
+      if (action) {
+        const btn = document.createElement("button");
+        btn.className = "linkbtn";
+        btn.textContent = action.label;
+        btn.dataset.action = action.action;
+        btn.dataset.value = action.value;
+        td.textContent = "";
+        td.appendChild(btn);
+      } else {
+        td.textContent = text;
+      }
       tr.appendChild(td);
     }
     body.appendChild(tr);
@@ -638,6 +808,7 @@ function renderResults() {
     }
   }
   updateSortIndicators();
+  applyDensity();
   refreshSummary();
   // One-way edge: render → idle. setIdleState() never renders.
   setIdleState();
@@ -649,23 +820,39 @@ function updateSortIndicators() {
     const active = th.dataset.key === sortKey;
     th.classList.toggle("sorted", active);
     th.textContent = active ? `${base} ${sortDir === 1 ? "\u25b2" : "\u25bc"}` : base;
+    th.setAttribute("aria-sort", active ? (sortDir === 1 ? "ascending" : "descending") : "none");
   }
+  syncColumnCheckboxes();
 }
 
 function refreshSummary() {
   const rows = filteredArticles();
   const total = storedArticles.length;
   const filtering = pdfFilter !== "All" || resultsQuery !== "";
+  let text;
   if (total === 0 || !filtering) {
-    $("summary").textContent = summaryBase;
+    text = summaryBase;
   } else if (pdfFilter !== "All") {
-    $("summary").textContent = `${summaryBase} | filter '${pdfFilter}': ${rows.length} of ${total} shown`;
+    text = `${summaryBase} | filter '${pdfFilter}': ${rows.length} of ${total} shown`;
   } else {
-    $("summary").textContent = `${summaryBase} | matching '${resultsQuery}': ${rows.length} of ${total} shown`;
+    text = `${summaryBase} | matching '${resultsQuery}': ${rows.length} of ${total} shown`;
   }
+  // Additive segment: the oracle-mirrored text above keeps its exact wording.
+  if (selection.size > 0) text += ` | ${selection.size} selected`;
+  $("summary").textContent = text;
 }
 
 function onTableClick(e) {
+  // Cell actions run first and never fall through to row selection.
+  const action = e.target.closest("[data-action]");
+  if (action) {
+    e.preventDefault();
+    e.stopPropagation();
+    const value = action.dataset.value || "";
+    if (action.dataset.action === "reveal-pdf") invoke("reveal_path", { path: value }).catch(() => {});
+    else if (action.dataset.action === "open-pdf" || action.dataset.action === "open-link") openUrl(value);
+    return;
+  }
   const tr = e.target.closest("tr[data-iid]");
   if (!tr) return;
   const index = parseInt(tr.dataset.iid.replace("article-", ""), 10);
@@ -714,8 +901,8 @@ function onTableContextMenu(e) {
   menu.style.left = `${e.clientX}px`;
   menu.style.top = `${e.clientY}px`;
   const items = [
-    ["Open link", !link, () => openUrl(link)],
-    ["Reveal PDF in Explorer", !localPath, () => invoke("reveal_path", { path: localPath }).catch(() => {})],
+    ["Open link", !link, () => openRecordLink(a)],
+    ["Reveal PDF in Explorer", !localPath, () => revealRecordPdf(a)],
     ["Copy title", !a.title, () => copyText(a.title || "")],
     ["Copy DOI", !doi, () => copyText(doi)],
     ["Details", false, () => openDetailFor(index)],
@@ -743,8 +930,25 @@ function copyText(text) {
 function openDetailFor(index) {
   const a = storedArticles[index];
   if (!a) return;
+  detailIndex = index;
   $("detailText").textContent = articleDetailText(a);
+  $("btnDetailOpenLink").disabled = !(a.link || "");
+  $("btnDetailOpenPdf").disabled = !(a.pdfLocalPath ?? a.pdf_local_path ?? a.pdfUrl ?? a.pdf_url);
+  $("btnDetailCopyDoi").disabled = !(a.doi || "");
+  $("btnDetailCopyTitle").disabled = !(a.title || "");
   $("detailDialog").showModal();
+}
+
+function openRecordLink(a) {
+  if (a && a.link) openUrl(a.link);
+}
+
+function revealRecordPdf(a) {
+  if (!a) return;
+  const localPath = a.pdfLocalPath ?? a.pdf_local_path ?? "";
+  if (localPath) { invoke("reveal_path", { path: localPath }).catch(() => {}); return; }
+  const url = a.pdfUrl ?? a.pdf_url ?? "";
+  if (url) openUrl(url);
 }
 
 // ---- details dialog ----
@@ -825,7 +1029,18 @@ async function onWorkerMessage(msg) {
     // status_message() L203-206: the hint rides along with the message.
     if (status === "SUCCESS") message += CHECK_METADATA_HINT;
     setStatus(STATUS_HEADINGS[status] || "Ready", message, STATUS_TONES[status] || "ready");
+    // Retry only for transport/provider failures; a clean "no results" is not a
+    // failure to retry (STATUS_TONES marks it "error" for emphasis only).
+    const retryable = status === "RATE_LIMITED" || status === "NETWORK_ERROR"
+      || status === "PARSING_ERROR" || status === "BLOCKED";
+    $("btnRetry").hidden = !(retryable && lastRequest);
+    if (!retryable) {
+      recordQuery(lastRequest?.query || "");
+      toggleConfig(true); // search succeeded: give the table the space
+    }
     renderResults();
+    saveResultsSoon();
+    scheduleSave();
     return;
   }
   if (msg.kind === "task_result") {
@@ -966,6 +1181,65 @@ function finishOperation() {
   saveSettingsNow();
 }
 
+// ---- retry ----
+function retryLastSearch() {
+  if (running || !lastRequest) return;
+  $("query").value = lastRequest.query;
+  $("pages").value = String(lastRequest.pages);
+  $("folder").value = lastRequest.outputFolder || "";
+  $("rankingEnabled").checked = !!lastRequest.rankingEnabled;
+  const preset = $("yearPreset");
+  const custom = lastRequest.yearFrom != null || lastRequest.yearTo != null;
+  preset.selectedIndex = custom ? 4 : 0;
+  $("yearFrom").value = lastRequest.yearFrom == null ? "" : String(lastRequest.yearFrom);
+  $("yearTo").value = lastRequest.yearTo == null ? "" : String(lastRequest.yearTo);
+  onYearPresetChanged();
+  startSearch();
+}
+
+// ---- collapsible config panel ----
+function toggleConfig(collapse) {
+  const panel = $("configPanel");
+  // toggleConfig() flips; toggleConfig(true) collapses; toggleConfig(false) expands.
+  const collapsed = collapse === undefined ? !panel.classList.contains("collapsed") : !!collapse;
+  panel.classList.toggle("collapsed", collapsed);
+  $("btnToggleConfig").setAttribute("aria-expanded", collapsed ? "false" : "true");
+  $("btnToggleConfig").textContent = collapsed ? "Filters \u25b8" : "Filters \u25be";
+}
+
+// ---- density + columns ----
+function applyDensity() {
+  $("resultsTable").classList.toggle("compact", $("compactRows").checked);
+}
+
+function syncColumnCheckboxes() {
+  for (const box of document.querySelectorAll("#columnsMenu input[data-col]")) {
+    box.checked = !hiddenColumns.has(box.dataset.col);
+  }
+  for (const col of document.querySelectorAll("#resultsTable colgroup col")) {
+    col.style.display = hiddenColumns.has(col.dataset.col) ? "none" : "";
+  }
+  // Headers must follow the colgroup, or the visible headers stop matching cells.
+  for (const th of document.querySelectorAll("#resultsTable th[data-key]")) {
+    th.style.display = hiddenColumns.has(th.dataset.key) ? "none" : "";
+  }
+}
+
+// ---- query history ----
+function recordQuery(query) {
+  const q = (query || "").trim();
+  if (!q) return;
+  queryHistory = [q, ...queryHistory.filter((x) => x !== q)].slice(0, 20);
+  historyCursor = -1;
+  const list = $("queryHistory");
+  list.innerHTML = "";
+  for (const item of queryHistory) {
+    const o = document.createElement("option");
+    o.value = item;
+    list.appendChild(o);
+  }
+}
+
 // ---- export folder reveal ----
 function rememberExportFolder(path) {
   const folder = path && path.includes("\\")
@@ -1002,6 +1276,11 @@ function collectSettings() {
     year_from: $("yearFrom").value,
     year_to: $("yearTo").value,
     pdf_filter: $("pdfFilter").value || "All",
+    sort_key: sortKey || "",
+    sort_dir: sortDir,
+    compact_rows: $("compactRows").checked,
+    hidden_columns: [...hiddenColumns],
+    query_history: queryHistory,
   };
 }
 
@@ -1041,8 +1320,43 @@ async function loadSettings() {
     $("pdfFilter").value = filterValue;
     pdfFilter = filterValue;
   }
+  // v3.2.0 state
+  hiddenColumns = new Set(saved.hidden_columns ?? []);
+  $("compactRows").checked = !!saved.compact_rows;
+  applyDensity();
+  syncColumnCheckboxes();
+  queryHistory = saved.query_history ?? [];
+  historyCursor = -1;
+  $("queryHistory").innerHTML = "";
+  for (const item of queryHistory) {
+    const o = document.createElement("option");
+    o.value = item;
+    $("queryHistory").appendChild(o);
+  }
+  if (saved.sort_key) { sortKey = saved.sort_key; sortDir = saved.sort_dir === -1 ? -1 : 1; }
   onYearPresetChanged();
   renderResults();
+  restoreResults();
+}
+
+async function restoreResults() {
+  if (running || storedArticles.length > 0) return;
+  let articles = [];
+  try { articles = await invoke("load_results"); } catch { return; }
+  if (!Array.isArray(articles) || articles.length === 0) return;
+  const word = articles.length === 1 ? "result" : "results";
+  storedArticles = articles;
+  summaryBase = `${articles.length} ${word} restored from the last session`;
+  renderResults();
+}
+
+let resultsTimer = null;
+function saveResultsSoon() {
+  clearTimeout(resultsTimer);
+  resultsTimer = setTimeout(() => {
+    if (storedArticles.length === 0) return;
+    invoke("save_results", { articles: storedArticles }).catch(() => {});
+  }, 800);
 }
 
 // ---- helpers ----

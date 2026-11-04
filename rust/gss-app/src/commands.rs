@@ -842,6 +842,18 @@ pub fn save_settings(settings: crate::settings::UiSettings) -> Result<(), String
     crate::settings::save(&settings)
 }
 
+/// Persist the collected records so a relaunch can restore them.
+#[tauri::command]
+pub fn save_results(articles: Vec<gss_core::models::Article>) -> Result<(), String> {
+    crate::settings::save_results(&articles)
+}
+
+/// Records from the previous session; empty when nothing usable was stored.
+#[tauri::command]
+pub fn load_results() -> Vec<gss_core::models::Article> {
+    crate::settings::load_results()
+}
+
 /// `reveal_path`: select a file (or open a folder) in File Explorer. Windows
 /// `explorer` returns a non-zero exit code even on success, so the child is
 /// simply spawned and never awaited.

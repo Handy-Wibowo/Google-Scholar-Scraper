@@ -44,6 +44,8 @@ fn main() {
             commands::pick_path,
             commands::load_settings,
             commands::save_settings,
+            commands::save_results,
+            commands::load_results,
             commands::reveal_path,
             commands::open_url,
         ])

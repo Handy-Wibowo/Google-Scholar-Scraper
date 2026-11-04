@@ -23,6 +23,16 @@ pub struct UiSettings {
     pub year_from: String,
     pub year_to: String,
     pub pdf_filter: String,
+    /// Table sort column key; empty string = source order.
+    pub sort_key: String,
+    /// Sort direction: 1 ascending, -1 descending.
+    pub sort_dir: i32,
+    /// Compact row height in the results table.
+    pub compact_rows: bool,
+    /// Column keys hidden from the results table; empty = all shown.
+    pub hidden_columns: Vec<String>,
+    /// Most recent successful queries, newest first (cap 20).
+    pub query_history: Vec<String>,
 }
 
 impl Default for UiSettings {
@@ -38,6 +48,11 @@ impl Default for UiSettings {
             year_from: String::new(),
             year_to: String::new(),
             pdf_filter: "All".to_string(),
+            sort_key: String::new(),
+            sort_dir: 1,
+            compact_rows: false,
+            hidden_columns: Vec::new(),
+            query_history: Vec::new(),
         }
     }
 }
@@ -78,6 +93,58 @@ pub fn save(settings: &UiSettings) -> Result<(), String> {
     Ok(())
 }
 
+const RESULTS_FILE: &str = "last-results.json";
+/// Upper bound on what is written to the sidecar; larger sessions keep the
+/// results in memory only rather than stalling the next launch.
+const RESULTS_MAX_ARTICLES: usize = 2000;
+/// A sidecar bigger than this is ignored on load (startup must stay fast).
+const RESULTS_MAX_BYTES: u64 = 5 * 1024 * 1024;
+
+/// `%APPDATA%\<identifier>\last-results.json`, beside `ui-settings.json`.
+pub fn results_path() -> Option<PathBuf> {
+    settings_path().map(|p| p.with_file_name(RESULTS_FILE))
+}
+
+/// Persist the collected records for the next launch. Best effort: a failure is
+/// returned for the caller to ignore, and an oversized set is skipped silently.
+pub fn save_results(articles: &[gss_core::models::Article]) -> Result<(), String> {
+    if articles.len() > RESULTS_MAX_ARTICLES {
+        return Err(format!(
+            "Too many records to persist ({} > {RESULTS_MAX_ARTICLES}).",
+            articles.len()
+        ));
+    }
+    let Some(path) = results_path() else {
+        return Err("APPDATA is not set.".to_string());
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let bytes = serde_json::to_vec(articles).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Records from the previous session; empty when absent, unreadable, corrupt,
+/// or too large to be worth the startup cost.
+pub fn load_results() -> Vec<gss_core::models::Article> {
+    let Some(path) = results_path() else {
+        return Vec::new();
+    };
+    let Ok(meta) = std::fs::metadata(&path) else {
+        return Vec::new();
+    };
+    if meta.len() > RESULTS_MAX_BYTES {
+        return Vec::new();
+    }
+    let Ok(bytes) = std::fs::read(&path) else {
+        return Vec::new();
+    };
+    serde_json::from_slice(&bytes).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,6 +161,11 @@ mod tests {
             year_from: "2018".into(),
             year_to: "2024".into(),
             pdf_filter: "Public PDF available".into(),
+            sort_key: "title".into(),
+            sort_dir: -1,
+            compact_rows: true,
+            hidden_columns: vec!["authors".into(), "link".into()],
+            query_history: vec!["machine learning".into(), "graph neural networks".into()],
         }
     }
 
@@ -149,6 +221,12 @@ mod tests {
         assert_eq!(parsed.query, "x");
         assert_eq!(parsed.pages, "1");
         assert!(parsed.ranking_enabled);
+        // v3.2.0 additions default cleanly for a v3.1.0-era file.
+        assert_eq!(parsed.sort_key, "");
+        assert_eq!(parsed.sort_dir, 1);
+        assert!(!parsed.compact_rows);
+        assert!(parsed.hidden_columns.is_empty());
+        assert!(parsed.query_history.is_empty());
     }
 
     #[test]
@@ -161,6 +239,43 @@ mod tests {
         std::fs::rename(&tmp, &path).unwrap();
         assert!(path.is_file());
         assert!(!tmp.exists());
+    }
+
+    #[test]
+    fn results_round_trip_and_bounds() {
+        // The sidecar is a plain Article array; verify serde handles the shape
+        // and that an oversized set is refused rather than silently truncated.
+        let articles = vec![
+            gss_core::models::Article::new("Alpha"),
+            gss_core::models::Article {
+                title: "Beta".into(),
+                doi: "10.1234/beta".into(),
+                pdf_url: "https://example.org/b.pdf".into(),
+                relevance_score: Some(42.5),
+                ..gss_core::models::Article::default()
+            },
+        ];
+        let bytes = serde_json::to_vec(&articles).unwrap();
+        let back: Vec<gss_core::models::Article> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back, articles);
+        assert_eq!(back[1].pdf_url, "https://example.org/b.pdf");
+
+        // Over the cap: refused, so load_results can never return a huge blob.
+        let many: Vec<gss_core::models::Article> = (0..=RESULTS_MAX_ARTICLES)
+            .map(|i| gss_core::models::Article::new(format!("t{i}")))
+            .collect();
+        assert!(save_results(&many).is_err());
+    }
+
+    #[test]
+    fn missing_results_file_loads_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(RESULTS_FILE);
+        let loaded: Vec<gss_core::models::Article> = std::fs::read(&path)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        assert!(loaded.is_empty());
     }
 
     #[test]

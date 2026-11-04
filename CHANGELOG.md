@@ -1,5 +1,45 @@
 # Changelog
 
+## 3.2.0
+
+Normal release of the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+published at the
+[v3.2.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v3.2.0).
+
+### Added
+
+- **Keyboard navigation over the results grid.** The table is a focusable grid
+  (`role="grid"`, `aria-selected` rows): Up/Down move, Shift+Up/Down extend the
+  selection from an anchor, Space toggles, Home/End jump, Enter opens Details.
+  Rows were previously unreachable without a mouse.
+- **Selection feedback.** The summary reports `N selected`, `Esc` clears the
+  selection when nothing else is dismissable, and `Ctrl+Shift+A` deselects all.
+- **Export scope.** The spreadsheet buttons say `Excel (visible)` / `CSV
+  (visible)` and a new scope selector adds **Selected rows**, so the two scopes
+  are explicit instead of implicit.
+- **Retry.** A failed search (rate limit, network, parsing, block) reveals a
+  `Retry search` button that restores the request and runs it again.
+- **Collapsible Filters panel.** After a successful search the setup panel
+  collapses automatically, growing the table from 5 to ~8 visible rows; the
+  toggle keeps it manual afterwards.
+- **Results survive a restart.** Collected records are written to
+  `%APPDATA%\com.googlescholarscraper.app\last-results.json` and restored on
+  launch (`N results restored from the last session`). Capped at 2000 records and
+  ignored above 5 MB so startup stays fast.
+- **Clickable PDF and link cells.** A downloaded record reveals its file in
+  Explorer; an available public PDF opens its URL. `pdf_url` was fetched but
+  previously never shown.
+- **Query history.** Recent successful queries feed a datalist and arrow-key
+  recall from an empty query field (newest 20 kept).
+- **Columns menu** to hide Authors/Relevance/Rank/PDF/Link, and a **Compact**
+  density toggle that drops rows from ~48 px to ~21 px.
+- **Details dialog actions:** Open link, Open PDF, Copy DOI, Copy title.
+- Accessibility: `scope="col"`, live `aria-sort`, `role="status"` +
+  `aria-live="polite"` on the status panel, and `:focus-visible` rings.
+- Long cells now ellipsize with the full value in a tooltip, and sort order plus
+  all new preferences persist between launches.
+
 ## 3.1.0
 
 Normal release of the

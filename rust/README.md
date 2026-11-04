@@ -1,4 +1,4 @@
-# Google Scholar Scraper — Rust (v3.1.0)
+# Google Scholar Scraper — Rust (v3.2.0)
 
 Native Rust rewrite of the Python desktop app (`../src`, frozen at v2.2.2 as the
 behavioral oracle). Same core logic — Scholar scraping, PDF
@@ -29,7 +29,7 @@ Requirements: Rust `stable-x86_64-pc-windows-gnu` + mingw-w64 binutils/gcc
 ## Tests
 
 ```bat
-tools\build.cmd test --workspace        :: 280 tests
+tools\build.cmd test --workspace        :: 25 + 262 tests
 tools\build.cmd clippy --workspace -- -D warnings
 tools\build.cmd fmt --all --check
 ```
@@ -48,6 +48,14 @@ operation ends; error dialogs that dismiss with Escape; and settings
 
 Cancelling, metadata enrichment, citation resolution, and rank application are
 all live against the network — nothing is a stub.
+
+### v3.2.0 UI additions
+
+Keyboard grid navigation, selection counts, export scope (visible/selected),
+retry after failure, collapsible Filters panel, results restored across launches
+(`last-results.json`), clickable PDF/link cells, query history, column visibility,
+compact density, and details-dialog actions. Settings for sort order, density,
+hidden columns, and query history persist in `ui-settings.json`.
 
 ## Parity vs the Python oracle
 
