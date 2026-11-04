@@ -1,4 +1,4 @@
-# Google Scholar Scraper — Rust (v3.5.0)
+# Google Scholar Scraper — Rust (v3.6.0)
 
 Native Rust rewrite of the Python desktop app (`../src`, frozen at v2.2.2 as the
 behavioral oracle). Same core logic — Scholar scraping, PDF

@@ -78,7 +78,7 @@ let detailIndex = -1; // record shown in the details dialog
 let queryHistory = []; // recent successful queries, newest first
 let historyCursor = -1; // recall position inside queryHistory
 let hiddenColumns = new Set(); // column keys hidden by the Columns menu
-const ALL_COLUMNS = ["title", "authors", "index", "rank", "pdf", "link", "cited", "oa"];
+const ALL_COLUMNS = ["title", "authors", "index", "rank", "pdf", "link", "cited", "oa", "decision", "tags"];
 
 const $ = (id) => document.getElementById(id);
 
@@ -160,6 +160,27 @@ function init() {
   $("btnRetry").onclick = retryLastSearch;
   $("btnMetadataOnly").onclick = () => checkMetadataPdfs(true);
   $("btnGapReport").onclick = showGapReport;
+  $("btnInclude").onclick = () => setDecision("include");
+  $("btnExclude").onclick = () => setDecision("exclude");
+  $("btnMaybe").onclick = () => setDecision("maybe");
+  $("btnDetailSaveReview").onclick = () => saveDetailReview();
+  $("btnReviewMenu").onclick = (e) => {
+    e.stopPropagation();
+    toggleMenu("reviewMenu", "btnReviewMenu", !$("reviewMenu").classList.contains("open"));
+  };
+  const bindReview = (id, fn) => {
+    $(id).onclick = () => {
+      toggleMenu("reviewMenu", "btnReviewMenu", false);
+      fn();
+    };
+  };
+  bindReview("menuPrisma", showPrisma);
+  bindReview("menuScreeningLog", exportScreeningLog);
+  bindReview("menuNearDup", showNearDuplicates);
+  bindReview("menuBaselineSave", saveBaseline);
+  bindReview("menuBaselineDiff", diffBaseline);
+  bindReview("menuRescore", rescoreWithQuery);
+  bindReview("menuImportExport", importOwnExport);
   $("btnExportMenu").onclick = (e) => {
     e.stopPropagation();
     toggleMenu("exportMenu", "btnExportMenu", !$("exportMenu").classList.contains("open"));
@@ -468,6 +489,10 @@ function sortValue(a, key) {
     }
     case "oa":
       return (a.oaStatus ?? a.oa_status ?? "").toLocaleLowerCase();
+    case "decision":
+      return decisionLabel(a);
+    case "tags":
+      return tagsLabel(a).toLocaleLowerCase();
     default:
       return "";
   }
@@ -847,6 +872,8 @@ function renderResults() {
         link ? { action: "open-link", value: link, label: "Open link" } : null],
       ["cited", (a.citedBy ?? a.cited_by) == null ? "" : String(a.citedBy ?? a.cited_by), null],
       ["oa", (a.oaStatus ?? a.oa_status ?? "").trim(), null],
+      ["decision", decisionLabel(a), null],
+      ["tags", tagsLabel(a), null],
     ];
     for (const [key, text, action] of cells) {
       if (hiddenColumns.has(key)) continue;
@@ -854,6 +881,14 @@ function renderResults() {
       td.dataset.col = key;
       td.title = text; // full value survives truncation
       // A retracted or corrected record must be visible without opening it.
+      const decision = key === "decision" ? decisionLabel(a) : "";
+      if (decision) {
+        const badge = document.createElement("span");
+        badge.className = `badge ${decision}`;
+        badge.textContent = decision.toUpperCase();
+        td.textContent = "";
+        td.appendChild(badge);
+      }
       const notice = (a.retraction ?? "").trim();
       if (notice && key === "title") {
         const badge = document.createElement("span");
@@ -865,6 +900,9 @@ function renderResults() {
         td.appendChild(badge);
         td.appendChild(document.createTextNode(" "));
       }
+      // Cell content: an action button, else the badge already appended above,
+      // else plain text. The badge branch matters: the fallback would otherwise
+      // overwrite it (decisions are rendered as badges, not text).
       if (action) {
         const btn = document.createElement("button");
         btn.className = "linkbtn";
@@ -873,7 +911,7 @@ function renderResults() {
         btn.dataset.value = action.value;
         td.textContent = "";
         td.appendChild(btn);
-      } else {
+      } else if (td.childNodes.length === 0) {
         td.textContent = text;
       }
       tr.appendChild(td);
@@ -1063,6 +1101,11 @@ function openDetailFor(index) {
   const a = storedArticles[index];
   if (!a) return;
   detailIndex = index;
+  const entry = reviewEntry(a);
+  $("detailDecision").value = entry.decision || "";
+  $("detailReason").value = entry.reason || "";
+  $("detailTags").value = (entry.tags || []).join(", ");
+  $("detailNote").value = entry.note || "";
   $("detailText").textContent = articleDetailText(a);
   $("btnDetailOpenLink").disabled = !(a.link || "");
   $("btnDetailOpenPdf").disabled = !(a.pdfLocalPath ?? a.pdf_local_path ?? a.pdfUrl ?? a.pdf_url);
@@ -1085,6 +1128,23 @@ async function openAbstract(index) {
   } else {
     $("abstractText").textContent = "No abstract is available from Crossref or OpenAlex for this record. Open the link to read the paper at its source.";
   }
+}
+
+function saveDetailReview() {
+  if (detailIndex === -1) return;
+  const decision = $("detailDecision").value;
+  const reason = $("detailReason").value.trim();
+  const note = $("detailNote").value.trim();
+  const tags = $("detailTags").value.split(",").map((t) => t.trim()).filter(Boolean);
+  updateReview([detailIndex], (entry, now) => {
+    entry.decision = decision;
+    entry.reason = decision === "exclude" ? reason : "";
+    entry.note = note;
+    entry.tags = tags;
+    entry.updated_at = now;
+  });
+  $("detailDialog").close();
+  setStatus("Review saved", "The decision, note and tags were saved for this record.", "success");
 }
 
 function openRecordLink(a) {
@@ -1384,6 +1444,105 @@ function showGapReport() {
   if (!$("errorDialog").open) $("errorDialog").showModal();
 }
 
+// ---- review project (P3) ----
+// Decisions/notes/tags are keyed by DOI (or normalized title) rather than row
+// index, so they follow a paper across re-searches and appends.
+let reviewProject = { version: 1, entries: {}, baselines: {} };
+
+function reviewKey(a) {
+  const doi = String(a.doi || "").trim().toLowerCase();
+  if (doi) return "doi:" + doi;
+  const title = String(a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return title ? "title:" + title : "";
+}
+
+function reviewEntry(a) {
+  const key = reviewKey(a);
+  return (key && reviewProject.entries[key]) || { decision: "", reason: "", note: "", tags: [] };
+}
+
+function decisionLabel(a) {
+  const d = reviewEntry(a).decision;
+  return d ? d : "";
+}
+
+function tagsLabel(a) {
+  const t = reviewEntry(a).tags || [];
+  return t.join(", ");
+}
+
+async function loadReviewProject() {
+  try {
+    const stored = await invoke("load_review_project");
+    if (stored && stored.entries) reviewProject = stored;
+  } catch {
+    /* first run: empty project */
+  }
+}
+
+function scheduleReviewSave() {
+  clearTimeout(reviewSaveTimer);
+  reviewSaveTimer = setTimeout(() => {
+    invoke("save_review_project", { project: reviewProject }).catch(() => {});
+  }, 400);
+}
+let reviewSaveTimer = null;
+
+/// In-app replacement for window.prompt, which a Tauri webview can suppress.
+function askText(title, initial) {
+  return new Promise((resolve) => {
+    $("promptTitle").textContent = title;
+    $("promptInput").value = initial || "";
+    const dialog = $("promptDialog");
+    const done = (value) => {
+      $("btnPromptOk").onclick = null;
+      $("btnPromptCancel").onclick = null;
+      if (dialog.open) dialog.close();
+      resolve(value);
+    };
+    $("btnPromptOk").onclick = () => done($("promptInput").value.trim());
+    $("btnPromptCancel").onclick = () => done("");
+    dialog.showModal();
+    $("promptInput").focus();
+  });
+}
+
+/// Apply one field change to every selected row (or the detail row).
+function updateReview(indices, mutate) {
+  const now = Math.floor(Date.now() / 1000);
+  for (const index of indices) {
+    const a = storedArticles[index];
+    if (!a) continue;
+    const key = reviewKey(a);
+    if (!key) continue;
+    const entry = reviewProject.entries[key] || { decision: "", reason: "", note: "", tags: [], updated_at: 0, found_by: "" };
+    mutate(entry, now);
+    entry.updated_at = now;
+    reviewProject.entries[key] = entry;
+  }
+  scheduleReviewSave();
+  renderResults();
+}
+
+function selectedIndices() {
+  if (selection.size > 0) return [...selection];
+  return [];
+}
+
+function setDecision(decision) {
+  const indices = selectedIndices();
+  if (indices.length === 0) {
+    setStatus("No papers selected", "Select one or more rows, then record a decision.", "warning");
+    return;
+  }
+  const reason = $("detailReason") ? $("detailReason").value.trim() : "";
+  updateReview(indices, (entry) => {
+    entry.decision = decision;
+    entry.reason = decision === "exclude" ? reason : "";
+  });
+  setStatus("Review saved", `${indices.length} record(s) marked ${decision}.`, "success");
+}
+
 // ---- extra exports (P2) ----
 const EXTRA_FORMATS = {
   json: "scholar_articles.json",
@@ -1523,6 +1682,110 @@ async function copyFormattedCitation(index) {
     }
   } catch (err) {
     showError("Copy failed", errMessage(err));
+  }
+}
+
+// ---- review actions ----
+async function showPrisma() {
+  try {
+    const summary = await invoke("review_prisma", { articles: storedArticles });
+    showError("PRISMA counts", String(summary));
+  } catch (err) {
+    showError("PRISMA counts", errMessage(err));
+  }
+}
+
+async function exportScreeningLog() {
+  const rows = await invoke("review_screening_log", { articles: storedArticles }).catch(() => []);
+  if (!Array.isArray(rows) || rows.length === 0) {
+    setStatus("Nothing to export", "Record at least one decision or note first.", "warning");
+    return;
+  }
+  const path = joinPath(exportFolder() || ".", "screening_log.csv");
+  const header = "Title,DOI,Decision,Reason,Tags,Note,Found by,Updated (unix),SJR,SINTA\r\n";
+  const body = rows.map((r) => [r.title, r.doi, r.decision, r.reason, r.tags, r.note, r.found_by, r.updated_at, r.sjr_quartile, r.sinta_rank]
+    .map((v) => {
+      const s = String(v ?? "");
+      return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(",")).join("\r\n");
+  try {
+    await invoke("write_text_file", { path, content: header + body + "\r\n" });
+    setStatus("Ready", `Screening log written to ${path}.`, "ready");
+    rememberExportFolder(path);
+  } catch (err) {
+    showError("Export failed", errMessage(err));
+  }
+}
+
+async function showNearDuplicates() {
+  const pairs = await invoke("review_near_duplicates", { articles: storedArticles }).catch(() => []);
+  if (!Array.isArray(pairs) || pairs.length === 0) {
+    showError("Near-duplicate report", "No likely duplicate pairs above 0.8 similarity.");
+    return;
+  }
+  const lines = pairs.slice(0, 40).map((p) => {
+    const a = storedArticles[p.first] || {};
+    const b = storedArticles[p.second] || {};
+    return `${(p.similarity * 100).toFixed(0)}%  ${a.title || "?"}\n     vs ${b.title || "?"}`;
+  });
+  showError("Near-duplicate report", `${pairs.length} pair(s) above 0.8 similarity:\n\n${lines.join("\n\n")}`);
+}
+
+async function saveBaseline() {
+  const name = await askText("Baseline name", "week1");
+  if (!name) return;
+  try {
+    await invoke("review_save_baseline", { name });
+    setStatus("Baseline saved", `Saved ${storedArticles.length} record(s) as "${name}".`, "success");
+  } catch (err) {
+    showError("Could not save baseline", errMessage(err));
+  }
+}
+
+async function diffBaseline() {
+  const name = await askText("Baseline name to compare against", "week1");
+  if (!name) return;
+  const diff = await invoke("review_diff_baseline", { name }).catch(() => null);
+  if (!diff) {
+    showError("Baseline diff", `No baseline named "${name}".`);
+    return;
+  }
+  const added = (diff.added || []).map((i) => storedArticles[i]?.title || "?").slice(0, 20);
+  showError(
+    "Baseline diff",
+    `${diff.added.length} new · ${diff.removed} no longer present · ${diff.unchanged} unchanged` +
+      (added.length ? `\n\nNew records:\n${added.map((t) => `· ${t}`).join("\n")}` : "")
+  );
+}
+
+async function rescoreWithQuery() {
+  const query = $("resultsSearch") ? $("resultsSearch").value.trim() : "";
+  if (!query) {
+    setStatus("Nothing to score", "Type a query in the filter box first, then re-score.", "warning");
+    return;
+  }
+  try {
+    await invoke("review_rescore", { query, enabled: true });
+    const restored = await invoke("load_results").catch(() => []);
+    if (Array.isArray(restored) && restored.length) storedArticles = restored;
+    renderResults();
+    setStatus("Re-scored", `Re-ranked ${storedArticles.length} record(s) against "${query}".`, "success");
+  } catch (err) {
+    showError("Re-score failed", errMessage(err));
+  }
+}
+
+async function importOwnExport() {
+  const path = await dialog("open", "Choose a CSV or JSON export to import");
+  if (!path) return;
+  try {
+    const added = await invoke("review_import_export", { path });
+    const restored = await invoke("load_results").catch(() => []);
+    if (Array.isArray(restored) && restored.length) storedArticles = restored;
+    renderResults();
+    setStatus("Imported", `${added} new record(s) merged from ${path}.`, "success");
+  } catch (err) {
+    showError("Import failed", errMessage(err));
   }
 }
 
@@ -1695,6 +1958,7 @@ async function loadSettings() {
   } catch {
     /* no catalog is a normal first run */
   }
+  await loadReviewProject();
   onYearPresetChanged();
   renderResults();
   restoreResults();

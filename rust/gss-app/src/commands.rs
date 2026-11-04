@@ -1148,6 +1148,271 @@ pub fn export_excel(
         .map_err(CommandError::export_failed)
 }
 
+/// The whole review project (decisions, notes, tags, baselines).
+#[tauri::command]
+pub fn load_review_project() -> crate::settings::StoredProject {
+    crate::settings::load_project()
+}
+
+/// Persist the review project.
+#[tauri::command]
+pub fn save_review_project(project: crate::settings::StoredProject) -> Result<(), CommandError> {
+    crate::settings::save_project(&project).map_err(|e| {
+        CommandError::new(
+            crate::errors::INVALID_ARGUMENT,
+            format!("Could not save the project: {e}"),
+        )
+    })
+}
+
+/// PRISMA-style counts over the stored records.
+#[tauri::command]
+pub fn review_prisma(
+    state: State<'_, AppState>,
+    articles: Option<Vec<gss_core::models::Article>>,
+) -> String {
+    let records = match articles {
+        Some(list) if !list.is_empty() => list,
+        _ => state.articles(),
+    };
+    crate::settings::load_project()
+        .to_core()
+        .prisma(&records)
+        .summary()
+}
+
+/// Screening log rows (what was decided, why, when, and which query found it).
+#[tauri::command]
+pub fn review_screening_log(
+    state: State<'_, AppState>,
+    articles: Option<Vec<gss_core::models::Article>>,
+) -> Vec<gss_core::review::ScreeningLogRow> {
+    let records = match articles {
+        Some(list) if !list.is_empty() => list,
+        _ => state.articles(),
+    };
+    crate::settings::load_project()
+        .to_core()
+        .screening_log(&records)
+}
+
+/// Likely duplicate pairs for human confirmation.
+#[tauri::command]
+pub fn review_near_duplicates(
+    state: State<'_, AppState>,
+    articles: Option<Vec<gss_core::models::Article>>,
+) -> Vec<gss_core::review::NearDuplicate> {
+    let records = match articles {
+        Some(list) if !list.is_empty() => list,
+        _ => state.articles(),
+    };
+    gss_core::review::find_near_duplicates(&records, 0.8)
+}
+
+/// Re-score the stored results against a new query, without searching again.
+#[tauri::command]
+pub fn review_rescore(
+    state: State<'_, AppState>,
+    query: String,
+    enabled: bool,
+) -> Result<(), CommandError> {
+    let articles = state.articles();
+    if articles.is_empty() {
+        return Err(CommandError::nothing_to_check());
+    }
+    let ranked = gss_core::ranking::rank_articles(&query, articles, enabled);
+    state.set_articles(ranked);
+    Ok(())
+}
+
+/// Compare the current set against a named baseline.
+#[tauri::command]
+pub fn review_diff_baseline(
+    state: State<'_, AppState>,
+    name: String,
+) -> Option<gss_core::review::BaselineDiff> {
+    crate::settings::load_project()
+        .to_core()
+        .diff_baseline(&name, &state.articles())
+}
+
+/// Store the current set as a named baseline.
+#[tauri::command]
+pub fn review_save_baseline(state: State<'_, AppState>, name: String) -> Result<(), CommandError> {
+    let mut stored = crate::settings::load_project();
+    let mut project = stored.to_core();
+    project.save_baseline(&name, &state.articles());
+    stored = crate::settings::StoredProject::from_core(&project);
+    crate::settings::save_project(&stored).map_err(|e| {
+        CommandError::new(
+            crate::errors::INVALID_ARGUMENT,
+            format!("Could not save the baseline: {e}"),
+        )
+    })
+}
+
+/// Append freshly searched results to the stored set, deduplicated.
+///
+/// Records keep their first-seen provenance, which is what a methods section
+/// reports.
+#[tauri::command]
+pub fn review_append(
+    state: State<'_, AppState>,
+    articles: Vec<gss_core::models::Article>,
+) -> usize {
+    let mut combined = state.articles();
+    let before = combined.len();
+    combined.extend(articles);
+    let deduped = gss_core::dedupe::deduplicate_articles(combined);
+    state.set_articles(deduped.articles.clone());
+    deduped.articles.len().saturating_sub(before)
+}
+
+/// Round-trip: read back a CSV/JSON the app itself exported.
+#[tauri::command]
+pub fn review_import_export(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<usize, CommandError> {
+    use gss_core::models::Article;
+    let target = Path::new(&path);
+    if !target.is_file() {
+        return Err(CommandError::no_file_found(&path));
+    }
+    let text = std::fs::read_to_string(target).map_err(|e| {
+        CommandError::new(
+            crate::errors::NO_FILE_FOUND,
+            format!("Could not read {path}: {e}"),
+        )
+    })?;
+
+    let mut imported: Vec<Article> = Vec::new();
+    if text.trim_start().starts_with('[') {
+        // The JSON export is an array of objects keyed by export column name.
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&text).map_err(|e| {
+            CommandError::new(
+                crate::errors::INVALID_ARGUMENT,
+                format!("Not a JSON export: {e}"),
+            )
+        })?;
+        for row in rows {
+            let get = |key: &str| {
+                row.get(key)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            let title = get("Title");
+            if title.trim().is_empty() {
+                continue;
+            }
+            imported.push(Article {
+                title,
+                authors: get("Authors"),
+                link: get("Link"),
+                doi: get("DOI"),
+                journal: get("Journal"),
+                issns: get("ISSNs")
+                    .split(';')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+                pdf_status: get("PDF Status").if_empty("unknown"),
+                pdf_local_path: get("PDF Local Path"),
+                ..Article::default()
+            });
+        }
+    } else {
+        // The CSV export: a header row, then quoted fields.
+        let mut lines = text.lines();
+        let header = lines.next().unwrap_or("");
+        let columns: Vec<&str> = header.split(',').map(|c| c.trim()).collect();
+        let index_of = |name: &str| columns.iter().position(|c| *c == name);
+        for line in lines {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let fields = split_csv_line(line);
+            let pick = |name: &str| {
+                index_of(name)
+                    .and_then(|i| fields.get(i))
+                    .cloned()
+                    .unwrap_or_default()
+            };
+            let title = pick("Title");
+            if title.trim().is_empty() {
+                continue;
+            }
+            imported.push(Article {
+                title,
+                authors: pick("Authors"),
+                link: pick("Link"),
+                doi: pick("DOI"),
+                journal: pick("Journal"),
+                issns: pick("ISSNs")
+                    .split(';')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+                pdf_status: pick("PDF Status").if_empty("unknown"),
+                pdf_local_path: pick("PDF Local Path"),
+                ..Article::default()
+            });
+        }
+    }
+
+    if imported.is_empty() {
+        return Err(CommandError::new(
+            crate::errors::INVALID_ARGUMENT,
+            "No records found in that file.",
+        ));
+    }
+    let mut combined = state.articles();
+    let before = combined.len();
+    combined.extend(imported);
+    let deduped = gss_core::dedupe::deduplicate_articles(combined);
+    state.set_articles(deduped.articles.clone());
+    Ok(deduped.articles.len() - before)
+}
+
+/// Minimal CSV field splitter for the app's own export (quoted fields, doubled
+/// quotes). Not a general CSV parser: the round-trip only reads our own output.
+fn split_csv_line(line: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut field = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if in_quotes && chars.peek() == Some(&'"') => {
+                field.push('"');
+                chars.next();
+            }
+            '"' => in_quotes = !in_quotes,
+            ',' if !in_quotes => {
+                out.push(std::mem::take(&mut field));
+            }
+            _ => field.push(c),
+        }
+    }
+    out.push(field);
+    out
+}
+
+/// Small helper so a missing cell becomes the core default.
+trait IfEmpty {
+    fn if_empty(self, fallback: &str) -> String;
+}
+impl IfEmpty for String {
+    fn if_empty(self, fallback: &str) -> String {
+        if self.trim().is_empty() {
+            fallback.to_string()
+        } else {
+            self
+        }
+    }
+}
+
 /// `export_excel_rich`: formatted workbook (freeze, filters, colours, links).
 #[tauri::command]
 pub fn export_excel_rich(
@@ -1269,6 +1534,25 @@ pub fn export_citations_extra(
     result
         .map(|_| format!("Exported {} citation(s) to {path}.", articles.len()))
         .map_err(CommandError::export_failed)
+}
+
+/// Write a UTF-8 text file (screening log and similar small artefacts).
+#[tauri::command]
+pub fn write_text_file(path: String, content: String) -> Result<(), CommandError> {
+    if let Some(parent) = Path::new(&path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            CommandError::new(
+                crate::errors::EXPORT_FAILED,
+                format!("Could not create {}: {e}", parent.display()),
+            )
+        })?;
+    }
+    std::fs::write(&path, content).map_err(|e| {
+        CommandError::new(
+            crate::errors::EXPORT_FAILED,
+            format!("Could not write {path}: {e}"),
+        )
+    })
 }
 
 /// Read a UTF-8 text file the app just wrote, for clipboard handoff.

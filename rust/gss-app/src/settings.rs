@@ -172,6 +172,123 @@ pub fn load_catalog() -> gss_core::catalog::JournalCatalog {
     gss_core::catalog::JournalCatalog::from_records(records)
 }
 
+const PROJECT_FILE: &str = "review-project.json";
+
+/// `%APPDATA%\<identifier>\review-project.json`.
+pub fn project_path() -> Option<PathBuf> {
+    settings_path().map(|p| p.with_file_name(PROJECT_FILE))
+}
+
+/// Persisted review state (decisions, notes, tags, baselines).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct StoredProject {
+    pub version: u32,
+    /// Keyed by `gss_core::review::record_key`.
+    pub entries: std::collections::BTreeMap<String, StoredEntry>,
+    pub baselines: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct StoredEntry {
+    pub decision: String,
+    pub reason: String,
+    pub note: String,
+    pub tags: Vec<String>,
+    pub updated_at: u64,
+    pub found_by: String,
+}
+
+impl Default for StoredProject {
+    fn default() -> Self {
+        Self {
+            version: gss_core::review::PROJECT_VERSION,
+            entries: Default::default(),
+            baselines: Default::default(),
+        }
+    }
+}
+
+impl StoredProject {
+    pub fn from_core(project: &gss_core::review::ReviewProject) -> Self {
+        let entries = project
+            .entries
+            .iter()
+            .map(|(key, entry)| {
+                (
+                    key.clone(),
+                    StoredEntry {
+                        decision: entry.decision.clone(),
+                        reason: entry.reason.clone(),
+                        note: entry.note.clone(),
+                        tags: entry.tags.clone(),
+                        updated_at: entry.updated_at,
+                        found_by: entry.found_by.clone(),
+                    },
+                )
+            })
+            .collect();
+        Self {
+            version: project.version,
+            entries,
+            baselines: project.baselines.clone(),
+        }
+    }
+
+    pub fn to_core(&self) -> gss_core::review::ReviewProject {
+        let entries = self
+            .entries
+            .iter()
+            .map(|(key, e)| {
+                (
+                    key.clone(),
+                    gss_core::review::ReviewEntry {
+                        decision: e.decision.clone(),
+                        reason: e.reason.clone(),
+                        note: e.note.clone(),
+                        tags: e.tags.clone(),
+                        updated_at: e.updated_at,
+                        found_by: e.found_by.clone(),
+                    },
+                )
+            })
+            .collect();
+        gss_core::review::ReviewProject {
+            version: gss_core::review::PROJECT_VERSION,
+            entries,
+            baselines: self.baselines.clone(),
+        }
+    }
+}
+
+pub fn load_project() -> StoredProject {
+    let Some(path) = project_path() else {
+        return StoredProject::default();
+    };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return StoredProject::default();
+    };
+    match serde_json::from_slice::<StoredProject>(&bytes) {
+        Ok(project) if project.version == gss_core::review::PROJECT_VERSION => project,
+        _ => StoredProject::default(),
+    }
+}
+
+pub fn save_project(project: &StoredProject) -> Result<(), String> {
+    let Some(path) = project_path() else {
+        return Err("APPDATA is not set.".to_string());
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let bytes = serde_json::to_vec_pretty(project).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 const BIBTEX_KEYS_FILE: &str = "bibtex-keys.json";
 
 /// `%APPDATA%\<identifier>\bibtex-keys.json`.

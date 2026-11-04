@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Google Scholar Scraper v3.5.0</title>
+  <title>Google Scholar Scraper v3.6.0</title>
   <style>
     :root {
       --app-bg: #f3f6fb; --surface: #ffffff; --surface-alt: #f8fafc;
@@ -160,6 +160,14 @@
     .menu label { display: flex; gap: 6px; padding: 4px 8px; }
     .menu label:hover { background: var(--selection); }
     .toolbar-group { display: flex; align-items: center; gap: 6px; }
+    .smallwide { min-width: 140px; width: 180px; }
+    .badge.include { background: #1a7f37; color: #fff; }
+    .badge.exclude { background: #cf222e; color: #fff; }
+    .badge.maybe { background: #9a6700; color: #fff; }
+    .tagchip {
+      display: inline-block; background: var(--selection); border-radius: 3px;
+      padding: 0 5px; margin-right: 3px; font-size: 11px;
+    }
     .toolbar-group label { display: flex; align-items: center; gap: 4px; }
     .badge {
       display: inline-block; padding: 0 4px; border-radius: 3px;
@@ -185,7 +193,7 @@
 
   <div class="header">
     <div class="titles">
-      <h1>Google Scholar Scraper v3.5.0</h1>
+      <h1>Google Scholar Scraper v3.6.0</h1>
       <div class="subtitle">Search, rank, review, and export Scholar results.</div>
     </div>
     <button id="btnCancel" disabled>Cancel</button>
@@ -216,6 +224,22 @@
       <input type="text" id="rankingYear" class="small" />
       <button id="btnImport">Import</button>
       <button id="btnGapReport" title="List journals with no imported ranking match">Unranked gaps</button>
+      <span class="toolbar-group">
+        <label>Screen</label>
+        <button id="btnInclude" title="Mark selected rows as included">Include</button>
+        <button id="btnExclude" title="Mark selected rows as excluded">Exclude</button>
+        <button id="btnMaybe" title="Mark selected rows as maybe">Maybe</button>
+      </span>
+      <button id="btnReviewMenu">Review…</button>
+      <div class="menu" id="reviewMenu">
+        <button id="menuPrisma">PRISMA counts</button>
+        <button id="menuScreeningLog">Export screening log (CSV)</button>
+        <button id="menuNearDup">Near-duplicate report</button>
+        <button id="menuBaselineSave">Save current set as baseline…</button>
+        <button id="menuBaselineDiff">Diff against baseline…</button>
+        <button id="menuRescore">Re-score with the query…</button>
+        <button id="menuImportExport">Import a CSV/JSON export…</button>
+      </div>
     </div>
     <div class="row">
       <label><input type="checkbox" id="rankingEnabled" checked /> Rank by relevance (local scoring)</label>
@@ -299,6 +323,8 @@
         <label><input type="checkbox" data-col="link" checked /> Link</label>
         <label><input type="checkbox" data-col="cited" checked /> Cited by</label>
         <label><input type="checkbox" data-col="oa" checked /> OA status</label>
+        <label><input type="checkbox" data-col="decision" checked /> Decision</label>
+        <label><input type="checkbox" data-col="tags" checked /> Tags</label>
       </div>
       <label class="notice"><input type="checkbox" id="compactRows" /> Compact</label>
       <span class="toolbar-group">
@@ -325,6 +351,8 @@
           <col data-col="link" style="width:11%" />
           <col data-col="cited" style="width:6%" />
           <col data-col="oa" style="width:7%" />
+          <col data-col="decision" style="width:8%" />
+          <col data-col="tags" style="width:10%" />
         </colgroup>
         <thead>
           <tr>
@@ -336,6 +364,8 @@
             <th class="sortable" data-key="link" scope="col" aria-sort="none" title="Sort by link presence">Link</th>
             <th class="sortable" data-key="cited" scope="col" aria-sort="none" title="Sort by citation count (Crossref / OpenAlex)">Cited</th>
             <th class="sortable" data-key="oa" scope="col" aria-sort="none" title="Open-access status reported by OpenAlex">OA</th>
+            <th class="sortable" data-key="decision" scope="col" aria-sort="none" title="Your screening decision">Decision</th>
+            <th class="sortable" data-key="tags" scope="col" aria-sort="none" title="Tags you assigned">Tags</th>
           </tr>
         </thead>
         <tbody id="tableBody" role="rowgroup"></tbody>
@@ -358,6 +388,24 @@
     <pre id="detailText"></pre>
     <div class="disclaimer">Double-click a row to open its link. Ranking labels describe the journal only.</div>
     <div class="row">
+      <label for="detailDecision">Decision</label>
+      <select id="detailDecision">
+        <option value="">undecided</option>
+        <option value="include">include</option>
+        <option value="exclude">exclude</option>
+        <option value="maybe">maybe</option>
+      </select>
+      <label for="detailReason">Reason</label>
+      <input type="text" id="detailReason" class="smallwide" placeholder="coded exclusion reason" />
+    </div>
+    <div class="row">
+      <label for="detailTags">Tags</label>
+      <input type="text" id="detailTags" class="smallwide" placeholder="comma separated" />
+      <label for="detailNote">Note</label>
+      <input type="text" id="detailNote" style="flex:1" />
+      <button id="btnDetailSaveReview" class="primary">Save review</button>
+    </div>
+    <div class="row">
       <button id="btnDetailOpenLink">Open link</button>
       <button id="btnDetailAbstract">Abstract</button>
       <button id="btnDetailOpenPdf">Open PDF</button>
@@ -365,6 +413,17 @@
       <button id="btnDetailCopyTitle">Copy title</button>
       <span class="spacer"></span>
       <button id="btnCloseDetail">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="promptDialog">
+    <h3 id="promptTitle">Enter a value</h3>
+    <div class="row">
+      <input type="text" id="promptInput" style="flex:1" />
+    </div>
+    <div class="row">
+      <button id="btnPromptOk" class="primary">OK</button>
+      <button id="btnPromptCancel">Cancel</button>
     </div>
   </dialog>
 

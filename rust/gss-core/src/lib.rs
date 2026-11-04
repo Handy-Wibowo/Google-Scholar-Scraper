@@ -15,5 +15,6 @@ pub mod models;
 pub mod parser;
 pub mod pdf;
 pub mod ranking;
+pub mod review;
 pub mod text;
 pub mod url;

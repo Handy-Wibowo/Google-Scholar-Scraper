@@ -1,5 +1,47 @@
 # Changelog
 
+## 3.6.0
+
+Normal release of the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+published at the
+[v3.6.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v3.6.0).
+
+Phase 3 of the [roadmap](docs/ROADMAP.md): the app holds the reviewer's
+decisions, not just the metadata.
+
+### Review state
+
+- **Screening decisions** — include / exclude / maybe per record, with a coded
+  exclusion reason. Decisions are keyed by DOI (or normalized title when a record
+  has none), so they follow a paper across re-searches, re-sorts and appends
+  instead of being tied to a row position.
+- **Notes and tags** per record, editable in the details dialog.
+- **Decision and Tags columns**, with colour-coded badges and sortable values.
+- **Bulk screening** — select rows, then Include / Exclude / Maybe applies to all
+  of them.
+- Everything persists to `review-project.json` and survives restarts.
+
+### Review operations
+
+- **PRISMA counts** — identified, included, excluded (with per-reason tallies),
+  maybe and undecided.
+- **Screening log export** — CSV with title, DOI, decision, reason, tags, note,
+  the query that surfaced the record, and a timestamp.
+- **Near-duplicate report** — title-token pairs above 0.8 similarity, so a human
+  confirms merges that exact-title dedupe cannot catch.
+- **Baselines** — save the current set, then diff a later search against it to see
+  what appeared or disappeared.
+- **Re-score** the stored results against a new query without searching again.
+- **Round-trip import** — read back the app's own CSV or JSON export and merge it
+  by DOI/title.
+
+### Notes
+
+Review commands take the record list from the caller, because a restored session
+lives in the UI rather than in backend state — without that, a screening log for
+restored results came back empty.
+
 ## 3.5.0
 
 Normal release of the
