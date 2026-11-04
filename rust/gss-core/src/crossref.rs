@@ -1219,5 +1219,4 @@ mod metadata_tests {
         assert!(record.funders.is_empty());
         assert!(record.orcids.is_empty());
     }
-
 }
