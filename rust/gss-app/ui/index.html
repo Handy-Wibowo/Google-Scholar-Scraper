@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Google Scholar Scraper v3.0.0</title>
+  <style>
+    :root {
+      --app-bg: #f3f6fb; --surface: #ffffff; --surface-alt: #f8fafc;
+      --text: #111827; --muted: #5b677a; --border: #d8e0ea; --border-strong: #b9c6d6;
+      --primary: #185abc; --primary-hover: #1f6feb; --secondary-hover: #f4f7fb;
+      --disabled: #a6afbd; --selection: #dbeafe;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--app-bg); color: var(--text);
+      font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+      display: flex; flex-direction: column; height: 100vh;
+    }
+    .header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 18px 6px;
+    }
+    .header .titles { flex: 1; }
+    .header h1 { font-size: 16px; margin: 0; }
+    .header .subtitle { color: var(--muted); font-size: 12px; }
+    .panel {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; margin: 0 18px 10px; padding: 10px 12px;
+    }
+    .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+    .row:last-child { margin-bottom: 0; }
+    label { color: var(--muted); font-size: 12px; }
+    input[type="text"], input[type="number"] {
+      border: 1px solid var(--border-strong); border-radius: 4px;
+      padding: 4px 8px; font: inherit; background: var(--surface); min-width: 300px;
+    }
+    input.small { min-width: 0; width: 60px; }
+    select {
+      border: 1px solid var(--border-strong); border-radius: 4px;
+      padding: 4px 6px; font: inherit; background: var(--surface);
+    }
+    button {
+      border: 1px solid var(--border-strong); border-radius: 4px;
+      padding: 3px 12px; font: inherit; cursor: pointer;
+      background: var(--surface-alt); color: var(--text);
+    }
+    button.primary { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+    button:hover:not(:disabled) { filter: brightness(0.96); }
+    button:disabled { background: #f1f4f8; color: var(--disabled); cursor: arrow; border-color: var(--border); }
+    button.primary:disabled { background: #9bbbe8; color: #edf4ff; }
+    .notice { color: var(--muted); font-size: 11px; }
+    .status {
+      display: flex; gap: 10px; padding: 10px 12px;
+      border-left: 4px solid var(--border-strong);
+    }
+    .status .heading { font-weight: 700; font-size: 12px; }
+    .status .detail { color: var(--muted); font-size: 12px; }
+    .status.ready { background: var(--surface); border-color: var(--border-strong); }
+    .status.running { background: #eef4fc; border-color: var(--primary); }
+    .status.success { background: #effaf1; border-color: #1a7f37; }
+    .status.warning { background: #fff8e6; border-color: #9a6700; }
+    .status.error { background: #ffebe9; border-color: #cf222e; }
+    progress { width: 260px; height: 10px; }
+    .results { flex: 1; display: flex; flex-direction: column; margin: 0 18px 12px; min-height: 180px; }
+    .results-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+    .results-toolbar .spacer { flex: 1; }
+    .results-toolbar h2 { font-size: 15px; margin: 0; }
+    .summary { color: var(--muted); font-size: 12px; }
+    #appliedYear { color: var(--muted); font-size: 12px; }
+    .table-wrap {
+      flex: 1; overflow: auto; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 8px;
+    }
+    table { border-collapse: collapse; width: 100%; }
+    thead th {
+      position: sticky; top: 0; background: #eef3f8; text-align: left;
+      font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--border);
+    }
+    tbody td { padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 12px; }
+    tbody tr[data-iid] { cursor: default; }
+    tbody tr.selected { background: var(--selection); }
+    .empty {
+      flex: 1; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; color: var(--muted); gap: 6px;
+    }
+    .empty .title { font-size: 16px; font-weight: 700; color: var(--text); }
+    .empty.hidden, .table-wrap.hidden { display: none; }
+    dialog {
+      border: 1px solid var(--border-strong); border-radius: 8px;
+      padding: 14px; min-width: 520px; max-width: 820px;
+    }
+    dialog::backdrop { background: rgba(17, 24, 39, 0.35); }
+    dialog h3 { margin: 0 0 10px; font-size: 14px; }
+    dialog .disclaimer { color: var(--muted); font-size: 11px; margin: 8px 0; }
+    dialog pre {
+      background: var(--surface-alt); border: 1px solid var(--border);
+      border-radius: 4px; padding: 10px; white-space: pre-wrap;
+      max-height: 320px; overflow: auto; font: 12px/1.5 "Segoe UI", sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="titles">
+      <h1>Google Scholar Scraper v3.0.0</h1>
+      <div class="subtitle">Search, rank, review, and export Scholar results.</div>
+    </div>
+    <button id="btnCancel" disabled>Cancel</button>
+    <button id="btnSearch" class="primary">Search Scholar</button>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <label for="query">Query</label>
+      <input type="text" id="query" style="flex:1" />
+      <label for="pages">Pages</label>
+      <input type="text" id="pages" class="small" value="1" />
+    </div>
+    <div class="row">
+      <label for="folder">Export folder</label>
+      <input type="text" id="folder" style="flex:1" />
+      <button id="btnBrowse">Browse</button>
+    </div>
+    <div class="row">
+      <label for="rankingPath">Ranking file</label>
+      <input type="text" id="rankingPath" style="flex:1" />
+      <label for="rankingYear">Rank year</label>
+      <input type="text" id="rankingYear" class="small" />
+      <button id="btnImport">Import</button>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="rankingEnabled" checked /> Rank by relevance (local scoring)</label>
+      <span id="rankingNotice" class="notice">No ranks imported.</span>
+    </div>
+    <div class="row">
+      <label for="yearPreset">Published</label>
+      <select id="yearPreset"></select>
+      <label for="yearFrom">From</label>
+      <input type="text" id="yearFrom" class="small" />
+      <label for="yearTo">To</label>
+      <input type="text" id="yearTo" class="small" />
+    </div>
+  </div>
+
+  <div class="panel status ready" id="statusPanel">
+    <div>
+      <div class="heading" id="statusHeading">Ready</div>
+      <div class="detail" id="statusDetail">Enter a query, choose pages, then start a search.</div>
+    </div>
+    <progress id="progress" value="0" max="100"></progress>
+  </div>
+
+  <div class="results">
+    <div class="results-toolbar">
+      <h2>Results</h2>
+      <span class="summary" id="summary">No search has run yet.</span>
+      <span class="spacer"></span>
+      <button id="btnCheck" disabled>Check metadata / PDFs</button>
+      <button id="btnDownload" disabled>Download selected PDFs</button>
+      <button id="btnDetails" disabled>Details</button>
+    </div>
+    <div class="results-toolbar">
+      <label for="pdfFilter">PDF filter</label>
+      <select id="pdfFilter"></select>
+      <span id="appliedYear">Years: any time</span>
+      <span class="spacer"></span>
+      <button id="btnExportExcel" disabled>Excel</button>
+      <button id="btnExportCsv" disabled>CSV</button>
+      <button id="btnExportCitations" disabled>Citations</button>
+    </div>
+    <div class="table-wrap" id="tableWrap">
+      <table id="resultsTable">
+        <thead>
+          <tr><th>Title</th><th>Authors</th><th>Rel.</th><th>Rank</th><th>PDF</th><th>Link</th></tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="emptyState">
+      <div class="title" id="emptyTitle">No results yet</div>
+      <div id="emptyDetail">Run a search to review Google Scholar results here.</div>
+    </div>
+  </div>
+
+  <dialog id="detailDialog">
+    <h3>Selected paper details</h3>
+    <pre id="detailText"></pre>
+    <div class="disclaimer">Double-click a row to open its link. Ranking labels describe the journal only.</div>
+    <button id="btnCloseDetail">Close</button>
+  </dialog>
+
+  <dialog id="citationsDialog">
+    <h3>Export citations</h3>
+    <div class="row">
+      <label>Citation format</label>
+      <label><input type="radio" name="citFormat" value="bibtex" checked /> BibTeX (.bib)</label>
+      <label><input type="radio" name="citFormat" value="ris" /> RIS (.ris)</label>
+    </div>
+    <div class="row">
+      <label>Which records</label>
+      <label><input type="radio" name="citScope" value="selected" /> Selected rows</label>
+      <label><input type="radio" name="citScope" value="visible" checked /> Visible (filtered) rows</label>
+      <label><input type="radio" name="citScope" value="all" /> All collected records</label>
+    </div>
+    <div class="disclaimer">Records are resolved against Crossref when possible. Unresolved records keep their known fields and carry a review note; no PDF field is consulted.</div>
+    <div class="row">
+      <button id="btnDoExport" class="primary">Export citations</button>
+      <button id="btnCloseCitations">Close</button>
+    </div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

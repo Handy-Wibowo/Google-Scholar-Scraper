@@ -23,6 +23,10 @@ Google-Scholar-Scraper-v*-Portable-Windows-x64.zip
 Google-Scholar-Scraper-v*-Setup-Windows-x64.exe
 SHA256SUMS.txt
 
+# Rust build output and local config
+rust/target/
+rust/tools/*.cmd.bak
+
 # Local export and smoke-test output
 exports/
 scholar_articles.xlsx

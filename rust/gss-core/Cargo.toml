@@ -1,0 +1,27 @@
+[package]
+name = "gss-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json", "gzip"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+scraper = "0.20"
+ego-tree = "0.6"
+unicode-normalization = "0.1"
+regex = "1"
+rust_xlsxwriter = "0.102"
+calamine = "0.38"
+csv = "1"
+tempfile = "3"
+
+[dev-dependencies]
+wiremock = "0.6"
+pretty_assertions = "1"
+
+[features]
+# Fixture-serving HTTP layer for offline parity tests (step 6).
+test-server = []

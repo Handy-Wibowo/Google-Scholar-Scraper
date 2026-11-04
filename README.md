@@ -18,6 +18,9 @@ Noncommercial License 1.0.0, with separate commercial licensing available.
 
 > **V2.2.2 is the current normal release of the
 > [Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper).**
+> Successor: the v3.0.0 line is a native Rust rewrite (Tauri GUI) living in
+> [`rust/`](../rust/) — the Python app is frozen at 2.2.2 as the reference
+> implementation and behavioral oracle for the port's parity suite.
 > The release ships a Windows installer, portable ZIP, and `SHA256SUMS.txt` at the
 > [v2.2.2 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v2.2.2).
 > The tag and assets are published after fresh CI and Windows installer checks pass

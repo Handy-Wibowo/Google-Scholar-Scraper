@@ -1,0 +1,6 @@
+# windres (via tauri-build embed-resource) popens `cmd /c "gcc" ...`.
+# The cmd AutoRun conda hook corrupts that pipe; the hook exits early when
+# CONDA_SHLVL is defined. PATH must additionally be set by tools/build.cmd
+# (cargo [env] cannot override PATH) with backslash mingw64 first.
+[env]
+CONDA_SHLVL = "1"
