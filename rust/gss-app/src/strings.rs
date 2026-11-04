@@ -40,12 +40,12 @@ pub const DETAIL_DISCLAIMER: &str = "Journal quartiles and ranks describe the jo
 pub fn status_heading(status: &str) -> &'static str {
     match status {
         "SUCCESS" => "Search complete",
-        "PARTIAL_SUCCESS" => "Search partially completed",
-        "NO_RESULTS" => "No results",
-        "RATE_LIMITED" => "Rate limited",
-        "BLOCKED" => "Blocked by Google Scholar",
-        "NETWORK_ERROR" => "Search failed",
-        "PARSING_ERROR" => "Search failed",
+        "PARTIAL_SUCCESS" => "Search stopped early",
+        "NO_RESULTS" => "No results found",
+        "RATE_LIMITED" => "Google Scholar temporarily limited requests",
+        "BLOCKED" => "Google Scholar returned a challenge page",
+        "NETWORK_ERROR" => "Network request failed",
+        "PARSING_ERROR" => "Results could not be parsed safely",
         "CANCELLED" => "Search cancelled",
         _ => "Ready",
     }
@@ -64,15 +64,30 @@ pub fn status_tone(status: &str) -> &'static str {
 /// Default status detail per status when result.message is empty (L202-217).
 pub fn default_status_message(status: &str) -> &'static str {
     match status {
-        "SUCCESS" => "Run 'Check metadata / PDFs' to look up journal details and public PDFs.",
-        "PARTIAL_SUCCESS" => "Some pages could not be retrieved; collected results are kept.",
-        "NO_RESULTS" => "Try different keywords or fewer filters.",
-        "RATE_LIMITED" => "Google Scholar is throttling requests. Wait a moment, then retry.",
-        "BLOCKED" => "Google Scholar is showing a challenge page. Try again later.",
-        "NETWORK_ERROR" => "Google Scholar could not be reached. Check the connection.",
-        "PARSING_ERROR" => "The results page could not be read; Google Scholar may have changed.",
-        "CANCELLED" => "The search was cancelled.",
+        "SUCCESS" => "Search completed successfully.",
+        "PARTIAL_SUCCESS" => "Search stopped early. Collected results were preserved.",
+        "NO_RESULTS" => "No results found.",
+        "RATE_LIMITED" => "Google Scholar temporarily limited requests.",
+        "BLOCKED" => "Google Scholar returned a blocked or challenge page.",
+        "NETWORK_ERROR" => "Network request failed.",
+        "PARSING_ERROR" => "The response could not be interpreted safely.",
+        "CANCELLED" => "Search was cancelled.",
         _ => "",
+    }
+}
+
+/// Suffix `status_message()` appends to every SUCCESS message (L203-206).
+pub const CHECK_METADATA_HINT: &str =
+    " Run 'Check metadata / PDFs' to detect which papers have downloadable public PDFs; until then every PDF column shows Unknown.";
+
+/// Failure heading per operation (`_handle_task_error`, L1350-1360).
+pub fn task_error_heading(operation: &str) -> &'static str {
+    match operation {
+        "import" => "Ranking import failed",
+        "download" => "Download failed",
+        "check" => "Check failed",
+        "citations" => "Citation export failed",
+        _ => "Operation failed",
     }
 }
 
@@ -109,14 +124,22 @@ pub fn result_summary(
     duplicates: i32,
     invalid: i32,
 ) -> String {
+    // Singular/plural exactly as result_summary() L249-261 builds it.
+    let result_word = if result_count == 1 {
+        "result"
+    } else {
+        "results"
+    };
     let mut parts = vec![format!(
-        "{result_count} result(s) found | {successful_pages}/{requested_pages} pages completed"
+        "{result_count} {result_word} found | {successful_pages}/{requested_pages} pages completed"
     )];
     if duplicates > 0 {
-        parts.push(format!("{duplicates} duplicate(s) removed"));
+        let plural = if duplicates == 1 { "" } else { "s" };
+        parts.push(format!("{duplicates} duplicate removed{plural}"));
     }
     if invalid > 0 {
-        parts.push(format!("{invalid} invalid record(s) removed"));
+        let plural = if invalid == 1 { "" } else { "s" };
+        parts.push(format!("{invalid} invalid record removed{plural}"));
     }
     parts.join(" | ")
 }
@@ -204,13 +227,94 @@ mod tests {
 
     #[test]
     fn summary_and_progress() {
+        // Plural forms mirror result_summary() L249-261.
         assert_eq!(
             result_summary(3, 2, 3, 1, 0),
-            "3 result(s) found | 2/3 pages completed | 1 duplicate(s) removed"
+            "3 results found | 2/3 pages completed | 1 duplicate removed"
+        );
+        // Python appends the plural "s" to "removed" (L255/L259), so plurals
+        // read "removeds". Reproduced verbatim: parity beats tidy English.
+        assert_eq!(
+            result_summary(1, 2, 3, 1, 2),
+            "1 result found | 2/3 pages completed | 1 duplicate removed | 2 invalid record removeds"
+        );
+        assert_eq!(
+            result_summary(3, 2, 3, 2, 0),
+            "3 results found | 2/3 pages completed | 2 duplicate removeds"
+        );
+        assert_eq!(
+            result_summary(2, 1, 1, 0, 0),
+            "2 results found | 1/1 pages completed"
         );
         assert_eq!(progress_value(1, 4), 25);
         assert_eq!(progress_value(1, 0), 0);
         assert_eq!(progress_value(5, 4), 100);
+    }
+
+    #[test]
+    fn status_tables_match_python() {
+        // status_heading() L219-230 and status_message() L201-217, verbatim.
+        assert_eq!(status_heading("SUCCESS"), "Search complete");
+        assert_eq!(status_heading("PARTIAL_SUCCESS"), "Search stopped early");
+        assert_eq!(status_heading("NO_RESULTS"), "No results found");
+        assert_eq!(
+            status_heading("RATE_LIMITED"),
+            "Google Scholar temporarily limited requests"
+        );
+        assert_eq!(
+            status_heading("BLOCKED"),
+            "Google Scholar returned a challenge page"
+        );
+        assert_eq!(status_heading("NETWORK_ERROR"), "Network request failed");
+        assert_eq!(
+            status_heading("PARSING_ERROR"),
+            "Results could not be parsed safely"
+        );
+        assert_eq!(status_heading("CANCELLED"), "Search cancelled");
+
+        assert_eq!(
+            default_status_message("SUCCESS"),
+            "Search completed successfully."
+        );
+        assert_eq!(
+            default_status_message("PARTIAL_SUCCESS"),
+            "Search stopped early. Collected results were preserved."
+        );
+        assert_eq!(default_status_message("NO_RESULTS"), "No results found.");
+        assert_eq!(
+            default_status_message("RATE_LIMITED"),
+            "Google Scholar temporarily limited requests."
+        );
+        assert_eq!(
+            default_status_message("BLOCKED"),
+            "Google Scholar returned a blocked or challenge page."
+        );
+        assert_eq!(
+            default_status_message("NETWORK_ERROR"),
+            "Network request failed."
+        );
+        assert_eq!(
+            default_status_message("PARSING_ERROR"),
+            "The response could not be interpreted safely."
+        );
+        assert_eq!(default_status_message("CANCELLED"), "Search was cancelled.");
+
+        // The SUCCESS hint is a suffix, never a standalone default.
+        assert_eq!(
+            CHECK_METADATA_HINT,
+            " Run 'Check metadata / PDFs' to detect which papers have downloadable public PDFs; until then every PDF column shows Unknown."
+        );
+        assert!(!default_status_message("SUCCESS").contains("Check metadata"));
+    }
+
+    #[test]
+    fn task_error_headings_match_python() {
+        // _handle_task_error L1350-1360.
+        assert_eq!(task_error_heading("import"), "Ranking import failed");
+        assert_eq!(task_error_heading("download"), "Download failed");
+        assert_eq!(task_error_heading("check"), "Check failed");
+        assert_eq!(task_error_heading("citations"), "Citation export failed");
+        assert_eq!(task_error_heading("search"), "Operation failed");
     }
 
     #[test]

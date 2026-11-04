@@ -246,7 +246,6 @@ pub fn article_detail_text(article: Option<&Article>) -> String {
         );
     };
     let none = "unknown";
-    let none_list = "none";
     let mut lines = vec![if a.title.is_empty() {
         "(untitled)".to_string()
     } else {
@@ -280,7 +279,7 @@ pub fn article_detail_text(article: Option<&Article>) -> String {
     lines.push(format!(
         "ISSN: {}",
         if a.issns.is_empty() {
-            none_list
+            none
         } else {
             issns_joined.as_str()
         }

@@ -26,6 +26,34 @@ Windows installer, portable exe, and `SHA256SUMS.txt` are the release assets.
 - `Ctrl+A` is select-all for the result table and no longer hijacks carets in
   text fields; `Enter` starts a search from the query and year fields only.
 
+### Fixed (UI string parity)
+
+Every user-visible status string in the Rust window now matches the Python
+oracle verbatim, as the port has always claimed:
+
+- **Status lookups never matched.** `ExtractionStatus` serialized as
+  `"Success"` rather than `"SUCCESS"`, so every heading and tone lookup fell
+  through to the fallback — the window always read "Ready" after a search. The
+  enum now serializes as `SCREAMING_SNAKE_CASE`.
+- Search headings use the oracle's wording (`Search stopped early`,
+  `No results found`, `Google Scholar temporarily limited requests`,
+  `Google Scholar returned a challenge page`, `Network request failed`,
+  `Results could not be parsed safely`) and the result detail carries the
+  `Run 'Check metadata / PDFs' ...` hint.
+- Task failures report `Ranking import failed` / `Download failed` /
+  `Check failed` / `Citation export failed` (with the "existing ranking records
+  were kept" note) instead of the running labels.
+- Citation exports report `Citations exported` /
+  `Citation export cancelled` with the resolved-via-Crossref sentence.
+- Checks report the full `Updated metadata and public-PDF status for N records.`
+  sentence, and the cancelled/enrich-error variants compose the same detail.
+- Downloads report `Download finished` and distinguish newly saved, retained,
+  and unsaved records; imports name the file and always print the gained-label
+  count; the ranking-year range has its own message.
+- The details dialog prints ranking years inline, the raw `PDF status:` value,
+  and `unknown` for a missing ISSN; `Link:` shows `none`.
+- List summaries and `result_summary` use the oracle's singular/plural forms.
+
 ### Added
 
 - **Worker events are permitted.** The window label `main` and a capability

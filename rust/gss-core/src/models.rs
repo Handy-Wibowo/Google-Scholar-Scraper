@@ -191,7 +191,12 @@ pub struct CitationRecord {
 }
 
 /// The 8 extraction statuses, exact string values.
+///
+/// `rename_all` is load-bearing: the UI status tables key on the Python enum
+/// values ("SUCCESS", "PARTIAL_SUCCESS", ...). Without it serde emits "Success"
+/// and every heading/tone lookup silently falls through to the fallback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ExtractionStatus {
     Success,
     PartialSuccess,

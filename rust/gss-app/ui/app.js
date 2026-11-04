@@ -21,26 +21,30 @@ const DEFAULT_EXPORT_NAMES = {
   ris: "scholar_articles.ris",
 };
 
+// Verbatim from tkinter_app.py status_message() (L201) and status_heading()
+// (L219); the SUCCESS hint is appended at runtime, exactly as Python does.
 const STATUS_DEFAULTS = {
-  SUCCESS: "Run 'Check metadata / PDFs' to look up journal details and public PDFs.",
-  PARTIAL_SUCCESS: "Some pages could not be retrieved; collected results are kept.",
-  NO_RESULTS: "Try different keywords or fewer filters.",
-  RATE_LIMITED: "Google Scholar is throttling requests. Wait a moment, then retry.",
-  BLOCKED: "Google Scholar is showing a challenge page. Try again later.",
-  NETWORK_ERROR: "Google Scholar could not be reached. Check the connection.",
-  PARSING_ERROR: "The results page could not be read; Google Scholar may have changed.",
-  CANCELLED: "The search was cancelled.",
+  SUCCESS: "Search completed successfully.",
+  PARTIAL_SUCCESS: "Search stopped early. Collected results were preserved.",
+  NO_RESULTS: "No results found.",
+  RATE_LIMITED: "Google Scholar temporarily limited requests.",
+  BLOCKED: "Google Scholar returned a blocked or challenge page.",
+  NETWORK_ERROR: "Network request failed.",
+  PARSING_ERROR: "The response could not be interpreted safely.",
+  CANCELLED: "Search was cancelled.",
 };
 const STATUS_HEADINGS = {
   SUCCESS: "Search complete",
-  PARTIAL_SUCCESS: "Search partially completed",
-  NO_RESULTS: "No results",
-  RATE_LIMITED: "Rate limited",
-  BLOCKED: "Blocked by Google Scholar",
-  NETWORK_ERROR: "Search failed",
-  PARSING_ERROR: "Search failed",
+  PARTIAL_SUCCESS: "Search stopped early",
+  NO_RESULTS: "No results found",
+  RATE_LIMITED: "Google Scholar temporarily limited requests",
+  BLOCKED: "Google Scholar returned a challenge page",
+  NETWORK_ERROR: "Network request failed",
+  PARSING_ERROR: "Results could not be parsed safely",
   CANCELLED: "Search cancelled",
 };
+const CHECK_METADATA_HINT =
+  " Run 'Check metadata / PDFs' to detect which papers have downloadable public PDFs; until then every PDF column shows Unknown.";
 const STATUS_TONES = {
   SUCCESS: "success",
   PARTIAL_SUCCESS: "warning",
@@ -450,9 +454,14 @@ async function importRanking() {
   const yearText = $("rankingYear").value.trim();
   let year = null;
   if (yearText) {
-    year = parseInt(yearText, 10);
-    if (!Number.isInteger(year) || year < 1500 || year > 2100) {
+    // tkinter_app.py L993-1002: two distinct messages, not one combined check.
+    year = /^[+-]?\d+$/.test(yearText) ? Number(yearText) : NaN;
+    if (!Number.isInteger(year)) {
       setStatus("Check ranking year", "Ranking year must be a whole number, or empty when the file supplies it.", "error");
+      return;
+    }
+    if (year < 1500 || year > 2100) {
+      setStatus("Check ranking year", "Ranking year must be between 1500 and 2100.", "error");
       return;
     }
   }
@@ -748,29 +757,29 @@ function openDetail() {
 }
 
 function articleDetailText(a) {
+  // Verbatim from _open_detail_window's lines list (tkinter_app.py L315-339).
   const none = "unknown";
   const lines = [a.title || "(untitled)"];
   lines.push(`Authors: ${a.authors || none}`);
-  lines.push(`Link: ${a.link || none}`);
+  lines.push(`Link: ${a.link || "none"}`);
   lines.push(`DOI: ${a.doi || none}`);
   lines.push(`Journal: ${a.journal || none}`);
-  lines.push(`ISSN: ${(a.issns ?? []).length ? a.issns.join(", ") : "none"}`);
+  lines.push(`ISSN: ${(a.issns ?? []).length ? a.issns.join(", ") : none}`);
   lines.push(`Publication year: ${a.publicationYear ?? a.publication_year ?? none}`);
   lines.push("");
-  lines.push(`SJR quartile: ${(a.sjrQuartile ?? a.sjr_quartile) || none}`);
-  if (a.sjrYear ?? a.sjr_year) lines.push(`SJR ranking year: ${a.sjrYear ?? a.sjr_year}`);
+  const sjrYear = a.sjrYear ?? a.sjr_year;
+  lines.push(`SJR quartile: ${(a.sjrQuartile ?? a.sjr_quartile) || none}   (ranking year: ${sjrYear ?? none})`);
   lines.push(`SJR category: ${(a.sjrCategory ?? a.sjr_category) || none}`);
   lines.push(`SJR source: ${(a.sjrSourceUrl ?? a.sjr_source_url) || "no imported record"}`);
-  lines.push(`SINTA rank: ${(a.sintaRank ?? a.sinta_rank) || none}`);
-  if (a.sintaYear ?? a.sinta_year) lines.push(`SINTA ranking year: ${a.sintaYear ?? a.sinta_year}`);
+  const sintaYear = a.sintaYear ?? a.sinta_year;
+  lines.push(`SINTA rank: ${(a.sintaRank ?? a.sinta_rank) || none}   (ranking year: ${sintaYear ?? none})`);
   lines.push(`SINTA source: ${(a.sintaSourceUrl ?? a.sinta_source_url) || "no imported record"}`);
   lines.push("");
-  const status = a.pdfStatus ?? a.pdf_status;
-  const localPath = a.pdfLocalPath ?? a.pdf_local_path;
-  lines.push(`Public PDF: ${status === "available" ? (localPath ? "Downloaded" : "Public PDF") : status === "unavailable" ? "No public PDF" : "Unknown"}`);
+  // Python prints the raw stored status; no relabelling.
+  lines.push(`PDF status: ${a.pdfStatus ?? a.pdf_status}`);
   lines.push(`PDF detail: ${(a.pdfDetail ?? a.pdf_detail) || "not checked"}`);
   lines.push(`PDF source: ${(a.pdfSourceUrl ?? a.pdf_source_url) || "none"}`);
-  lines.push(`PDF local path: ${localPath || "not downloaded"}`);
+  lines.push(`PDF local path: ${(a.pdfLocalPath ?? a.pdf_local_path) || "not downloaded"}`);
   lines.push("");
   lines.push(DETAIL_DISCLAIMER);
   return lines.join("\n");
@@ -794,7 +803,7 @@ async function onWorkerMessage(msg) {
     if (!r || !status) {
       storedArticles = [];
       renderResults();
-      setStatus("Search failed", "The search did not return a result.", "error");
+      setStatus("Search failed", "The application did not receive a valid result.", "error");
       return;
     }
     storedArticles = r.articles ?? [];
@@ -803,13 +812,18 @@ async function onWorkerMessage(msg) {
     const successful = r.successfulPages ?? r.successful_pages ?? 0;
     const duplicates = r.duplicatesRemoved ?? r.duplicates_removed ?? 0;
     const invalid = r.invalidArticlesRemoved ?? r.invalid_articles_removed ?? 0;
-    summaryBase = `${storedArticles.length} result(s) found | ${successful}/${requested} pages completed` +
-      (duplicates ? ` | ${duplicates} duplicate(s) removed` : "") +
-      (invalid ? ` | ${invalid} invalid record(s) removed` : "");
+    // result_summary() L249-261: singular/plural, not "(s)".
+    const resultWord = storedArticles.length === 1 ? "result" : "results";
+    // Python appends the plural "s" to "removed" (L255/L259) — reproduced verbatim.
+    summaryBase = `${storedArticles.length} ${resultWord} found | ${successful}/${requested} pages completed` +
+      (duplicates ? ` | ${duplicates} duplicate removed${duplicates === 1 ? "" : "s"}` : "") +
+      (invalid ? ` | ${invalid} invalid record removed${invalid === 1 ? "" : "s"}` : "");
     const { from, to } = currentYearBounds();
     $("appliedYear").textContent = yearRangeLabel(from, to);
     setProgress(successful, requested);
-    const message = r.message || STATUS_DEFAULTS[status] || "";
+    let message = r.message || STATUS_DEFAULTS[status] || "";
+    // status_message() L203-206: the hint rides along with the message.
+    if (status === "SUCCESS") message += CHECK_METADATA_HINT;
     setStatus(STATUS_HEADINGS[status] || "Ready", message, STATUS_TONES[status] || "ready");
     renderResults();
     return;
@@ -825,9 +839,19 @@ async function onWorkerMessage(msg) {
         storedArticles = articles;
       }
       const checked = articles.filter((a) => (a.pdfStatus ?? a.pdf_status) !== "unknown").length;
-      if (p.cancelled) setStatus("Check cancelled", "The check was stopped; finished records keep their results.", "warning");
-      else if (p.enrichError) setStatus("Check finished with errors", p.enrichError, "warning");
-      else setStatus("Check complete", `${checked} of ${storedArticles.length} records now have a checked public-PDF status.`, "success");
+      // _finish_check (L1391-1405): detail is the checked-count sentence, and
+      // the enrich note is prepended/appended exactly as Python composes it.
+      const detail = `${checked} of ${storedArticles.length} records now have a checked public-PDF status.`;
+      const note = p.enrich_error ?? "";
+      if (p.cancelled) {
+        setStatus("Check cancelled", `Collected records were kept. ${detail}` + (note ? ` ${note}` : ""), "warning");
+      } else if (note) {
+        setStatus("Check finished with errors", `${note} ${detail}`, "warning");
+      } else {
+        setStatus("Check complete",
+          `Updated metadata and public-PDF status for ${storedArticles.length} records. ${detail} Records that stay unknown were not verified by the checked sources.`,
+          "success");
+      }
       renderResults();
     } else if (op === "import") {
       rankingCount = p.count ?? 0;
@@ -846,26 +870,54 @@ async function onWorkerMessage(msg) {
         }).length;
         storedArticles = p.articles;
       }
+      // _finish_import (L1420-1428): filename, cumulative total, and the
+      // gained-label sentence always (even "0 displayed record(s)").
+      const fileName = String(p.path || "").split(/[\\/]/).pop();
+      const yearNote = year
+        ? ` Ranking year ${year} was used for records without one.`
+        : " Records without a year stay unknown.";
       setStatus("Rankings imported",
-        `${p.count} ranking records${p.total ? ` (${p.total} total)` : ""}.` +
-        (year ? ` Ranking year ${year} was used for records without one.` : " Records without a year stay unknown.") +
-        (gained > 0 ? ` ${gained} displayed record(s) gained a journal label.` : ""),
+        `${p.count} ranking records added from ${fileName}; ${p.total} record(s) loaded in total (earlier imports were kept).` +
+        yearNote +
+        ` ${gained} displayed record(s) gained a journal label.`,
         "success");
       renderResults();
     } else if (op === "download") {
       const indices = p.indices ?? [];
       const articles = p.articles ?? [];
+      // _finish_download (L1444-1458): classify each record as newly saved,
+      // retained (path unchanged from a previous run), or not saved this run.
+      let newlySaved = 0;
+      let retained = 0;
+      let failed = 0;
       indices.forEach((storedIndex, i) => {
-        if (storedArticles[storedIndex] && articles[i]) storedArticles[storedIndex] = articles[i];
+        const previous = storedArticles[storedIndex];
+        const next = articles[i];
+        if (!previous || !next) return; // Python skips out-of-range indices entirely
+        const nextPath = next.pdfLocalPath ?? next.pdf_local_path;
+        const previousPath = previous.pdfLocalPath ?? previous.pdf_local_path;
+        if (nextPath) {
+          if (nextPath !== previousPath) newlySaved += 1;
+          else retained += 1;
+        } else {
+          failed += 1;
+        }
+        storedArticles[storedIndex] = next;
       });
-      const saved = articles.filter((a) => (a.pdfStatus ?? a.pdf_status) === "available").length;
-      setStatus("Download complete", `${saved} PDF(s) saved to ${p.folder}.`, "success");
+      const parts = [newlySaved > 0
+        ? `Saved ${newlySaved} new public PDF(s) to ${p.folder}.`
+        : "No new public PDF was saved."];
+      if (retained > 0) parts.push(` ${retained} record(s) kept the PDF already saved earlier; this attempt did not write a new file.`);
+      if (failed > 0) parts.push(` ${failed} selected record(s) had no downloadable public PDF or were cancelled; their metadata was kept.`);
+      setStatus("Download finished", parts.join(""), newlySaved > 0 ? "success" : "warning");
       renderResults();
     } else if (op === "citations") {
       if (p.cancelled) {
-        setStatus("Export cancelled", "No citation file was written.", "warning");
+        setStatus("Citation export cancelled", "No citation file was written.", "warning");
       } else {
-        setStatus("Export complete", `${p.verified} of ${p.count} record(s) verified; file written to ${p.path}.`, "success");
+        setStatus("Citations exported",
+          `Exported ${p.count} citation(s) to ${p.path}. ${p.verified} of ${p.count} resolved via Crossref; unresolved entries keep known fields and a review note.`,
+          "success");
         rememberExportFolder(p.path);
       }
     }
@@ -879,9 +931,19 @@ async function onWorkerMessage(msg) {
 
 function taskError(operation, message) {
   // One of the two messagebox paths: dismissable dialog + error status.
-  const heading = OPERATION_HEADINGS[operation] || "Task failed";
-  setStatus(heading, message, "error");
-  showError(heading, message);
+  // Verbatim from _handle_task_error (L1350-1360): past-tense failure headings,
+  // not the OPERATION_HEADINGS running labels.
+  const headings = {
+    import: "Ranking import failed",
+    download: "Download failed",
+    check: "Check failed",
+    citations: "Citation export failed",
+  };
+  const heading = headings[operation] || "Operation failed";
+  // L1353: an import failure must say the loaded records survived.
+  const detail = operation === "import" ? `${message} Existing ranking records were kept.` : message;
+  setStatus(heading, detail, "error");
+  showError(heading, detail);
 }
 
 function showError(title, detail) {
