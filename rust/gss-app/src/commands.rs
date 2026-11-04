@@ -1158,6 +1158,57 @@ pub fn export_excel(
     Ok(format!("Exported {} result(s) to {path}.", articles.len()))
 }
 
+/// Restore the saved window geometry (7.1) and remember later changes.
+///
+/// Called once from the window setup hook: a saved size is only applied when it
+/// is sane, so a monitor change cannot strand the window off-screen.
+#[tauri::command]
+pub fn restore_window_geometry(window: tauri::WebviewWindow) -> Result<(), CommandError> {
+    let settings = crate::settings::load_with_notice().settings;
+    if settings.window_w < 400 || settings.window_h < 300 {
+        return Ok(());
+    }
+    if settings.window_x != 0 || settings.window_y != 0 {
+        let _ = window.set_position(tauri::PhysicalPosition::new(
+            settings.window_x,
+            settings.window_y,
+        ));
+    }
+    let _ = window.set_size(tauri::PhysicalSize::new(
+        settings.window_w,
+        settings.window_h,
+    ));
+    if settings.window_maximized {
+        let _ = window.maximize();
+    }
+    Ok(())
+}
+
+/// Persist the current window geometry (7.1).
+#[tauri::command]
+pub fn save_window_geometry(window: tauri::WebviewWindow) -> Result<(), CommandError> {
+    let mut settings = crate::settings::load_with_notice().settings;
+    let maximized = window.is_maximized().unwrap_or(false);
+    settings.window_maximized = maximized;
+    // Only record a normal size; a maximized window reports the work area.
+    if !maximized {
+        if let Ok(size) = window.inner_size() {
+            settings.window_w = size.width;
+            settings.window_h = size.height;
+        }
+        if let Ok(pos) = window.outer_position() {
+            settings.window_x = pos.x;
+            settings.window_y = pos.y;
+        }
+    }
+    crate::settings::save(&settings).map_err(|e| {
+        CommandError::new(
+            crate::errors::INVALID_ARGUMENT,
+            format!("Could not save window state: {e}"),
+        )
+    })
+}
+
 /// The whole review project (decisions, notes, tags, baselines).
 #[tauri::command]
 pub fn load_review_project() -> crate::settings::StoredProject {

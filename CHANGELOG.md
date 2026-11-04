@@ -1,5 +1,38 @@
 # Changelog
 
+## 3.8.0
+
+Normal release of the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+published at the
+[v3.8.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v3.8.0).
+
+Phase 6 of the [roadmap](docs/ROADMAP.md): platform integration.
+
+### Added
+
+- **The window remembers where it was.** Size, position and maximized state are
+  captured on exit and restored on launch, and only when the saved values are
+  sane so a monitor change cannot strand the window off-screen. Verified live:
+  1350×875 at (32,32) persisted and re-applied.
+- **CI now builds the Windows installer.** The release job previously attached
+  only the bare executable, so the configured NSIS bundle target was never
+  produced by CI and every release needed a local build. It now installs the
+  Tauri CLI, runs `cargo tauri build --bundles nsis`, and attaches both the
+  portable exe and the setup program with a two-entry `SHA256SUMS.txt`.
+- The window capabilities needed for that geometry (`set-position`, `set-size`,
+  `maximize`, `is-maximized`, `inner-size`, `outer-position`) are granted
+  explicitly; nothing else was added to the capability file.
+
+### Not in this release
+
+The rest of P6 — native menu bar, system tray, file drag-and-drop, file
+associations, auto-update, code signing, installer options, uninstall cleanup,
+High-DPI handling, localization, portable mode and the remaining accelerator work
+— is **not** done. Those need new Tauri plugins, build features or out-of-band
+work (a signing certificate, hosted update manifests), which is a larger change
+than a version bump.
+
 ## 3.7.0
 
 Normal release of the

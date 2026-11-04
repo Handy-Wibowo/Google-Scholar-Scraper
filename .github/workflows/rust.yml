@@ -78,6 +78,15 @@ jobs:
       - name: Build release
         run: cargo build --release -p gss-app
 
+      - name: Build the Windows installer
+        # 7.10: the release used to attach only the bare exe, so the configured
+        # NSIS bundle target was never produced by CI. Build it here so users get
+        # the installed-app path without a local build on the author's machine.
+        run: |
+          cargo install tauri-cli --version "^2" --locked
+          cargo tauri build --bundles nsis
+          Get-ChildItem target\release\bundle\nsis
+
       - name: Packaging smoke on the shipped exe
         run: |
           $dir = Join-Path $env:RUNNER_TEMP smoke
@@ -93,9 +102,21 @@ jobs:
           $stage = Join-Path $env:RUNNER_TEMP stage
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item target\release\gss-app.exe "$stage\GoogleScholarScraper-${{ github.ref_name }}.exe"
+          # The installer's filename contains a space; normalise it for the release.
+          $setup = Get-ChildItem target\release\bundle\nsis\*.exe | Select-Object -First 1
+          if ($setup) {
+            Copy-Item $setup.FullName "$stage\Google.Scholar.Scraper-${{ github.ref_name }}-x64-setup.exe"
+          } else {
+            throw "NSIS installer was not produced"
+          }
           $hash = (Get-FileHash "$stage\GoogleScholarScraper-${{ github.ref_name }}.exe" -Algorithm SHA256).Hash
-          "$hash  GoogleScholarScraper-${{ github.ref_name }}.exe" | Out-File "$stage\SHA256SUMS.txt" -Encoding ascii
+          $setupHash = (Get-FileHash "$stage\Google.Scholar.Scraper-${{ github.ref_name }}-x64-setup.exe" -Algorithm SHA256).Hash
+          @(
+            "$hash  GoogleScholarScraper-${{ github.ref_name }}.exe",
+            "$setupHash  Google.Scholar.Scraper-${{ github.ref_name }}-x64-setup.exe"
+          ) | Out-File "$stage\SHA256SUMS.txt" -Encoding ascii
           Write-Host "SHA256: $hash"
+          Write-Host "Setup SHA256: $setupHash"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

@@ -69,6 +69,8 @@ fn main() {
             commands::review_save_baseline,
             commands::review_append,
             commands::review_import_export,
+            commands::restore_window_geometry,
+            commands::save_window_geometry,
             commands::cancel_operation,
             commands::pick_path,
             commands::load_settings,

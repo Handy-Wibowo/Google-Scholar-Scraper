@@ -38,6 +38,13 @@ pub struct UiSettings {
     pub schema_version: u32,
     /// Interface theme: "system", "light" or "dark" (5.11).
     pub theme: String,
+    /// Window geometry (7.1): restored on launch so the window comes back where
+    /// the user left it. Zero means "never saved".
+    pub window_x: i32,
+    pub window_y: i32,
+    pub window_w: u32,
+    pub window_h: u32,
+    pub window_maximized: bool,
 }
 
 /// Current settings layout version.
@@ -63,6 +70,11 @@ impl Default for UiSettings {
             query_history: Vec::new(),
             schema_version: SCHEMA_VERSION,
             theme: "system".to_string(),
+            window_x: 0,
+            window_y: 0,
+            window_w: 0,
+            window_h: 0,
+            window_maximized: false,
         }
     }
 }
@@ -406,6 +418,11 @@ mod tests {
             query_history: vec!["machine learning".into(), "graph neural networks".into()],
             schema_version: SCHEMA_VERSION,
             theme: "dark".into(),
+            window_x: 120,
+            window_y: 80,
+            window_w: 1280,
+            window_h: 820,
+            window_maximized: true,
         }
     }
 

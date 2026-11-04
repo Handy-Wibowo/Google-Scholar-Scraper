@@ -274,6 +274,8 @@ function init() {
   };
   window.addEventListener("beforeunload", () => {
     saveSettingsNow();
+    // 7.1: capture geometry on the way out.
+    invoke("save_window_geometry").catch(() => {});
   });
   setIdleState();
   loadSettings();
@@ -1998,6 +2000,8 @@ async function loadSettings() {
     /* no catalog is a normal first run */
   }
   applyTheme(saved.theme || "system");
+  // 7.1: restore the window's size and position from the last session.
+  invoke("restore_window_geometry").catch(() => {});
   await loadReviewProject();
   onYearPresetChanged();
   renderResults();
