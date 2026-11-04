@@ -57,6 +57,7 @@ fn main() {
             commands::export_tabular,
             commands::export_citations_extra,
             commands::format_citation_text,
+            commands::read_text_file,
             commands::cancel_operation,
             commands::pick_path,
             commands::load_settings,

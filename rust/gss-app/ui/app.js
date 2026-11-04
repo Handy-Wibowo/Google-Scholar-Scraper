@@ -180,6 +180,7 @@ function init() {
     const el = $(id);
     if (el) bindExport(id, () => extraExport(format));
   }
+  bindExport("menuCopyBib", () => copyBibliography());
   bindExport("menuCsl", () => extraCitationExport("csl-json"));
   bindExport("menuBibStable", () => extraCitationExport("bibtex-stable"));
   bindExport("menuBibFiles", () => extraCitationExport("bibtex-files"));
@@ -1480,6 +1481,34 @@ async function richExcelExport() {
     const msg = errMessage(err).replace("Export failed: ", "");
     setStatus("Ready", `Export failed: ${msg}`, "error");
     showError("Export failed", msg);
+  }
+}
+
+/// Numbered Markdown bibliography of the current export scope, on the clipboard.
+async function copyBibliography() {
+  const records = exportRecords();
+  if (records.length === 0) {
+    setStatus("Ready", "No results to export.", "ready");
+    return;
+  }
+  const tmp = joinPath(exportFolder() || ".", "scholar_bibliography.md");
+  try {
+    await invoke("export_citations_extra", {
+      articles: records,
+      path: tmp,
+      format: "grouped",
+      style: $("citeStyle").value,
+      groupBy: $("groupBy").value || "year",
+    });
+    const text = await invoke("read_text_file", { path: tmp }).catch(() => null);
+    if (typeof text === "string" && text) {
+      copyText(text);
+      setStatus("Copied", `Copied ${records.length} reference(s) as ${$("citeStyle").value.toUpperCase()}.`, "success");
+    } else {
+      setStatus("Copied", `Wrote the bibliography to ${tmp}.`, "success");
+    }
+  } catch (err) {
+    showError("Copy failed", errMessage(err));
   }
 }
 

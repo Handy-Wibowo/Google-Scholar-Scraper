@@ -1271,6 +1271,33 @@ pub fn export_citations_extra(
         .map_err(CommandError::export_failed)
 }
 
+/// Read a UTF-8 text file the app just wrote, for clipboard handoff.
+///
+/// Bounded: a runaway file must not be pulled into the webview wholesale.
+#[tauri::command]
+pub fn read_text_file(path: String) -> Result<String, CommandError> {
+    const MAX: u64 = 4 * 1024 * 1024;
+    let target = Path::new(&path);
+    let meta = std::fs::metadata(target).map_err(|e| {
+        CommandError::new(
+            crate::errors::NO_FILE_FOUND,
+            format!("Could not read {path}: {e}"),
+        )
+    })?;
+    if meta.len() > MAX {
+        return Err(CommandError::new(
+            crate::errors::INVALID_ARGUMENT,
+            format!("File too large to read: {path}"),
+        ));
+    }
+    std::fs::read_to_string(target).map_err(|e| {
+        CommandError::new(
+            crate::errors::NO_FILE_FOUND,
+            format!("Could not read {path}: {e}"),
+        )
+    })
+}
+
 /// One formatted reference line, for the clipboard.
 #[tauri::command]
 pub fn format_citation_text(article: gss_core::models::Article, style: String) -> String {
