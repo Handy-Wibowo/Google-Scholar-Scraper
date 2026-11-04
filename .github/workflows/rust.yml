@@ -124,6 +124,7 @@ jobs:
           name: release-bundle
           path: |
             ${{ runner.temp }}/stage/GoogleScholarScraper*
+            ${{ runner.temp }}/stage/Google.Scholar.Scraper*
             ${{ runner.temp }}/stage/SHA256SUMS.txt
 
       - name: Attach to release
@@ -131,4 +132,5 @@ jobs:
         with:
           files: |
             ${{ runner.temp }}/stage/GoogleScholarScraper*
+            ${{ runner.temp }}/stage/Google.Scholar.Scraper*
             ${{ runner.temp }}/stage/SHA256SUMS.txt
