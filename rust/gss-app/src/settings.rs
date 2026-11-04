@@ -36,6 +36,8 @@ pub struct UiSettings {
     /// Settings layout version. Bumped only on an incompatible change; a file
     /// with a different value is replaced by defaults and the caller is told.
     pub schema_version: u32,
+    /// Interface theme: "system", "light" or "dark" (5.11).
+    pub theme: String,
 }
 
 /// Current settings layout version.
@@ -60,6 +62,7 @@ impl Default for UiSettings {
             hidden_columns: Vec::new(),
             query_history: Vec::new(),
             schema_version: SCHEMA_VERSION,
+            theme: "system".to_string(),
         }
     }
 }
@@ -402,6 +405,7 @@ mod tests {
             hidden_columns: vec!["authors".into(), "link".into()],
             query_history: vec!["machine learning".into(), "graph neural networks".into()],
             schema_version: SCHEMA_VERSION,
+            theme: "dark".into(),
         }
     }
 

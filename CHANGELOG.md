@@ -1,5 +1,50 @@
 # Changelog
 
+## 3.7.0
+
+Normal release of the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+published at the
+[v3.7.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v3.7.0).
+
+Phases 4 and 5 of the [roadmap](docs/ROADMAP.md): interface polish plus
+reliability hardening.
+
+### Interface (P4)
+
+- **A failed search no longer destroys the table.** The previous rows stay
+  visible while a replacement search runs and only get replaced on success.
+- **Clear result filters** — one button in the empty state resets the text and
+  PDF filters together, instead of telling the user to go change them.
+- **Scholar order** — returns the table to Google Scholar's original ordering
+  after sorting by a column.
+- **Theme selector** — system / light / dark, persisted. Dark uses the same
+  variable set, so every panel follows.
+- A legend beside the applied-year range states what Index, Rank and Cited mean,
+  next to where they appear rather than only in the details disclaimer.
+
+### Reliability (P5)
+
+- **Atomic exports.** Excel and CSV are written to a temporary file and renamed
+  once complete, so an interrupted export cannot leave a truncated workbook that
+  still opens. Byte output is unchanged — parity gate 4 stays zero-diff.
+
+### Verified already-correct
+
+`Don't record a transport failure as "no PDF"` (6.12) turned out to be implemented
+already: a transport error during the PDF check yields `unknown`, not
+`unavailable`, and `connection_error_is_unknown` pins it. The backlog entry was
+stale, not the code.
+
+### Not in this release
+
+The remaining P5 items — retry/`Retry-After` handling, per-host politeness,
+proxy configuration, the SSRF transport fix, `--doctor`, the diagnostics bundle,
+checkpoint/resume and the work queue — are **not** done. Several sit on
+parity-gated code paths (`fetch_with_retries` is compared by gate 5), so they need
+careful, individually verified changes rather than a batch. They stay on the
+roadmap.
+
 ## 3.6.0
 
 Normal release of the

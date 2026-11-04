@@ -1696,7 +1696,7 @@ dependencies = [
 
 [[package]]
 name = "gss-app"
-version = "3.6.0"
+version = "3.7.0"
 dependencies = [
  "gss-core",
  "reqwest 0.12.28",
@@ -1710,7 +1710,7 @@ dependencies = [
 
 [[package]]
 name = "gss-core"
-version = "3.6.0"
+version = "3.7.0"
 dependencies = [
  "calamine",
  "csv",
@@ -1730,7 +1730,7 @@ dependencies = [
 
 [[package]]
 name = "gss-parity"
-version = "3.6.0"
+version = "3.7.0"
 dependencies = [
  "gss-core",
  "serde",

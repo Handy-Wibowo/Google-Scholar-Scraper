@@ -3,9 +3,18 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Google Scholar Scraper v3.6.0</title>
+  <title>Google Scholar Scraper v3.7.0</title>
   <style>
     :root {
+      color-scheme: light dark;
+    }
+    :root[data-theme="dark"] {
+      --app-bg: #0f141b; --surface: #161d26; --surface-alt: #1d2632;
+      --text: #e6edf3; --muted: #9aa7b6; --border: #2b3644; --border-strong: #3d4b5c;
+      --primary: #4d8ff0; --primary-hover: #6aa4f5; --secondary-hover: #222c39;
+      --disabled: #66717f; --selection: #1e3149;
+    }
+    :root[data-theme="light"] {
       --app-bg: #f3f6fb; --surface: #ffffff; --surface-alt: #f8fafc;
       --text: #111827; --muted: #5b677a; --border: #d8e0ea; --border-strong: #b9c6d6;
       --primary: #185abc; --primary-hover: #1f6feb; --secondary-hover: #f4f7fb;
@@ -193,10 +202,15 @@
 
   <div class="header">
     <div class="titles">
-      <h1>Google Scholar Scraper v3.6.0</h1>
+      <h1>Google Scholar Scraper v3.7.0</h1>
       <div class="subtitle">Search, rank, review, and export Scholar results.</div>
     </div>
     <button id="btnCancel" disabled>Cancel</button>
+    <select id="themeSelect" title="Interface theme">
+      <option value="system">Theme: system</option>
+      <option value="light">Theme: light</option>
+      <option value="dark">Theme: dark</option>
+    </select>
     <button id="btnSearch" class="primary">Search Scholar</button>
   </div>
 
@@ -280,6 +294,7 @@
       <label for="pdfFilter">PDF filter</label>
       <select id="pdfFilter"></select>
       <span id="appliedYear">Years: any time</span>
+      <span class="notice" id="columnLegend" title="Index and Rank describe the journal; relevance orders the rows; Cited counts references">Index/Rank = journal · Cited = references</span>
       <span id="yearHistogram" class="summary" title="Publication-year distribution of the stored records"></span>
       <span class="spacer"></span>
       <span class="toolbar-group">
@@ -314,6 +329,7 @@
         <button id="menuGroupedBib">Grouped bibliography</button>
         <button id="menuCopyBib">Copy bibliography to clipboard</button>
       </div>
+      <button id="btnResetSort" title="Return to Google Scholar’s original order">Scholar order</button>
       <button id="btnColumns">Columns</button>
       <div class="menu" id="columnsMenu">
         <label><input type="checkbox" data-col="authors" checked /> Authors</label>
@@ -374,6 +390,7 @@
     <div class="empty" id="emptyState">
       <div class="title" id="emptyTitle">No results yet</div>
       <div id="emptyDetail">Run a search to review Google Scholar results here.</div>
+      <button id="btnClearFilters" hidden>Clear result filters</button>
     </div>
   </div>
 

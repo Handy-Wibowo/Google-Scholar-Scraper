@@ -160,6 +160,12 @@ function init() {
   $("btnRetry").onclick = retryLastSearch;
   $("btnMetadataOnly").onclick = () => checkMetadataPdfs(true);
   $("btnGapReport").onclick = showGapReport;
+  $("btnClearFilters").onclick = clearResultFilters;
+  $("btnResetSort").onclick = resetSort;
+  $("themeSelect").onchange = () => {
+    applyTheme($("themeSelect").value);
+    scheduleSave();
+  };
   $("btnInclude").onclick = () => setDecision("include");
   $("btnExclude").onclick = () => setDecision("exclude");
   $("btnMaybe").onclick = () => setDecision("maybe");
@@ -434,6 +440,14 @@ function closeMenus() {
 }
 
 // ---- sortable columns ----
+// 5.8: sortable headers cycle asc/desc; this returns to the original order.
+function resetSort() {
+  sortKey = null;
+  sortDir = 1;
+  renderResults();
+  scheduleSave();
+}
+
 function onHeaderClick(key) {
   if (sortKey === key) {
     sortDir = sortDir === 1 ? -1 : 1;
@@ -639,9 +653,9 @@ async function startSearch() {
     setStatus("Check search setup", errMessage(err), "error");
     return;
   }
-  storedArticles = [];
+  // 5.1: keep the previous rows visible until the replacement succeeds, so a
+  // failed search does not destroy the working context.
   selection.clear();
-  renderResults();
   setProgress(0, 100);
   $("summary").textContent = "Searching...";
   setStatus(OPERATION_HEADINGS.search, "Results will appear here as soon as the search completes.", "running");
@@ -923,11 +937,13 @@ function renderResults() {
   $("emptyState").classList.toggle("hidden", rows.length > 0);
   if (rows.length === 0) {
     if (hasAny) {
+      $("btnClearFilters").hidden = !(pdfFilter !== "All" || resultsQuery !== "");
       $("emptyTitle").textContent = "No papers match this filter";
       $("emptyDetail").textContent = resultsQuery
         ? "Clear the results filter or the PDF filter to see the stored records. Filtering never removes stored results."
         : "Change the PDF filter to see the stored records. Filtering never removes stored results.";
     } else {
+      $("btnClearFilters").hidden = true;
       $("emptyTitle").textContent = "No results yet";
       $("emptyDetail").textContent = "Run a search to review Google Scholar results here.";
     }
@@ -968,6 +984,16 @@ function updateYearHistogram() {
   const recent = years.filter((y) => y >= recentCutoff).length;
   const pct = Math.round((recent / years.length) * 100);
   el.textContent = `${min}\u2013${max}, ${pct}% since ${recentCutoff}`;
+}
+
+// 5.2: a real reset control instead of telling the user to change filters.
+function clearResultFilters() {
+  resultsQuery = "";
+  $("resultsSearch").value = "";
+  $("pdfFilter").value = "All";
+  pdfFilter = "All";
+  renderResults();
+  setIdleState();
 }
 
 function refreshSummary() {
@@ -1444,6 +1470,18 @@ function showGapReport() {
   if (!$("errorDialog").open) $("errorDialog").showModal();
 }
 
+// ---- theme (5.11) ----
+function applyTheme(theme) {
+  const chosen = theme || "system";
+  if (chosen === "system") {
+    const dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+  } else {
+    document.documentElement.dataset.theme = chosen;
+  }
+  if ($("themeSelect")) $("themeSelect").value = chosen;
+}
+
 // ---- review project (P3) ----
 // Decisions/notes/tags are keyed by DOI (or normalized title) rather than row
 // index, so they follow a paper across re-searches and appends.
@@ -1889,6 +1927,7 @@ function collectSettings() {
     compact_rows: $("compactRows").checked,
     hidden_columns: [...hiddenColumns],
     query_history: queryHistory,
+    theme: $("themeSelect") ? $("themeSelect").value : "system",
   };
 }
 
@@ -1958,6 +1997,7 @@ async function loadSettings() {
   } catch {
     /* no catalog is a normal first run */
   }
+  applyTheme(saved.theme || "system");
   await loadReviewProject();
   onYearPresetChanged();
   renderResults();

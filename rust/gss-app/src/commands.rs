@@ -1143,9 +1143,19 @@ pub fn export_excel(
     if articles.is_empty() {
         return Err(CommandError::no_results_to_export());
     }
-    gss_core::exporters::save_to_excel(&articles, Path::new(&path))
-        .map(|_| format!("Exported {} result(s) to {path}.", articles.len()))
-        .map_err(CommandError::export_failed)
+    let target = Path::new(&path);
+    let tmp = target.with_extension("xlsx.tmp");
+    if let Err(e) = gss_core::exporters::save_to_excel(&articles, &tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(CommandError::export_failed(e));
+    }
+    // Rename only once the whole file is written, so an interrupted export
+    // cannot leave a truncated workbook that still looks valid.
+    if let Err(e) = std::fs::rename(&tmp, target) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(CommandError::export_failed(e));
+    }
+    Ok(format!("Exported {} result(s) to {path}.", articles.len()))
 }
 
 /// The whole review project (decisions, notes, tags, baselines).
@@ -1621,9 +1631,19 @@ pub fn export_csv(
     if articles.is_empty() {
         return Err(CommandError::no_results_to_export());
     }
-    gss_core::exporters::save_to_csv(&articles, Path::new(&path))
-        .map(|_| format!("Exported {} result(s) to {path}.", articles.len()))
-        .map_err(CommandError::export_failed)
+    let target = Path::new(&path);
+    let tmp = target.with_extension("csv.tmp");
+    if let Err(e) = gss_core::exporters::save_to_csv(&articles, &tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(CommandError::export_failed(e));
+    }
+    // Rename only once the whole file is written, so an interrupted export
+    // cannot leave a truncated workbook that still looks valid.
+    if let Err(e) = std::fs::rename(&tmp, target) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(CommandError::export_failed(e));
+    }
+    Ok(format!("Exported {} result(s) to {path}.", articles.len()))
 }
 
 /// File/dir picker for the frontend (import/download/browse paths).
