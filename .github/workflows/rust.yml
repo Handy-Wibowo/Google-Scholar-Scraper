@@ -89,11 +89,12 @@ jobs:
 
       - name: Stage artifacts
         run: |
+          # github.ref_name already carries the leading "v" for tag pushes.
           $stage = Join-Path $env:RUNNER_TEMP stage
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item target\release\gss-app.exe "$stage\GoogleScholarScraper-v${{ github.ref_name }}.exe"
-          $hash = (Get-FileHash "$stage\GoogleScholarScraper-v${{ github.ref_name }}.exe" -Algorithm SHA256).Hash
-          "$hash  GoogleScholarScraper-v${{ github.ref_name }}.exe" | Out-File "$stage\SHA256SUMS.txt" -Encoding ascii
+          Copy-Item target\release\gss-app.exe "$stage\GoogleScholarScraper-${{ github.ref_name }}.exe"
+          $hash = (Get-FileHash "$stage\GoogleScholarScraper-${{ github.ref_name }}.exe" -Algorithm SHA256).Hash
+          "$hash  GoogleScholarScraper-${{ github.ref_name }}.exe" | Out-File "$stage\SHA256SUMS.txt" -Encoding ascii
           Write-Host "SHA256: $hash"
 
       - name: Upload artifacts
