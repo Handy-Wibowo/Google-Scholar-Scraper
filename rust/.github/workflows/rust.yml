@@ -45,8 +45,10 @@ jobs:
         run: |
           cargo build -p gss-app
           $dir = Join-Path $env:RUNNER_TEMP smoke
-          & target\debug\gss-app.exe --packaging-smoke $dir
-          if ($LASTEXITCODE -ne 0) { throw "packaging smoke failed" }
+          # Start-Process -Wait: the release profile is a GUI-subsystem binary, and
+          # PowerShell does not wait for those, so & / $LASTEXITCODE is unreliable.
+          $proc = Start-Process -FilePath target\debug\gss-app.exe -ArgumentList "--packaging-smoke `"$dir`"" -Wait -PassThru
+          if ($proc.ExitCode -ne 0) { throw "packaging smoke failed with exit code $($proc.ExitCode)" }
           Get-ChildItem $dir | ForEach-Object { Write-Host $_.Name }
 
   release:
@@ -76,8 +78,11 @@ jobs:
       - name: Packaging smoke on the shipped exe
         run: |
           $dir = Join-Path $env:RUNNER_TEMP smoke
-          & target\release\gss-app.exe --packaging-smoke $dir
-          if ($LASTEXITCODE -ne 0) { throw "packaging smoke failed" }
+          # Start-Process -Wait: the release profile is a GUI-subsystem binary, and
+          # PowerShell does not wait for those, so & / $LASTEXITCODE is unreliable.
+          $proc = Start-Process -FilePath target\release\gss-app.exe -ArgumentList "--packaging-smoke `"$dir`"" -Wait -PassThru
+          if ($proc.ExitCode -ne 0) { throw "packaging smoke failed with exit code $($proc.ExitCode)" }
+          Get-ChildItem $dir | ForEach-Object { Write-Host $_.Name }
 
       - name: Stage artifacts
         run: |
