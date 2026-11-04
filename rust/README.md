@@ -56,3 +56,5 @@ the Rust port mirrors it 1:1 per module.
 exact 20-column export contract; CI (`​.github/workflows/rust.yml`) runs tests,
 clippy, fmt, the smoke check, and attaches the exe + `SHA256SUMS.txt` on `v3.*`
 tags.
+
+<!-- ci-trigger: rust workflow watches rust/** -->
