@@ -22,7 +22,7 @@ exports, in-app abstract lookup, journal indexing column.
 
 Effort: **S** ≤ ½ day · **M** 1–2 days · **L** 3+ days.
 
-> **Delivery order lives in [](ROADMAP.md)** — the same 109 items
+> **Delivery order lives in [`ROADMAP.md`](ROADMAP.md)** — the same 109 items
 > grouped into 8 phases mapped to 7 releases (v3.3.1 → v4.0.0), with
 > dependencies and per-phase cost. Pick a phase there; this file explains what each
 > item is and why it matters.
