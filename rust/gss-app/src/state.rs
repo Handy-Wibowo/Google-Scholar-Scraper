@@ -77,10 +77,6 @@ impl CancelFlag {
     pub fn load(&self) -> bool {
         self.0.load(Ordering::SeqCst)
     }
-
-    pub fn clone_arc(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
-        self.0.clone()
-    }
 }
 
 /// Mutable application state guarded by the UI thread via Tauri commands.
@@ -122,14 +118,6 @@ impl AppState {
 
     pub fn request_cancel(&self) {
         self.cancel.store(true);
-    }
-
-    /// Handle to the shared cancel flag for watcher threads.
-    pub fn cancel_flag_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
-        // The AtomicBool lives inside the Mutex-free state; share via Arc by
-        // reconstructing from the state struct itself. Because AppState is
-        // managed by Tauri (Arc'd), we expose the flag through a clone.
-        self.cancel.clone_arc()
     }
 
     pub fn is_cancelled(&self) -> bool {

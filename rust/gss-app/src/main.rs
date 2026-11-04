@@ -9,6 +9,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod settings;
 mod state;
 mod strings;
 
@@ -41,6 +42,10 @@ fn main() {
             commands::export_csv,
             commands::cancel_operation,
             commands::pick_path,
+            commands::load_settings,
+            commands::save_settings,
+            commands::reveal_path,
+            commands::open_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running gss-app");

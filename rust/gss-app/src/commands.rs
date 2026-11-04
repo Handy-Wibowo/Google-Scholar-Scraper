@@ -72,6 +72,66 @@ fn emit(app: &AppHandle, message: &WorkerMessage) {
     let _ = app.emit("worker", message);
 }
 
+/// Read the UI's cancel flag out of managed state (None when the state is
+/// gone, i.e. the window is closing — treated as "not cancelled").
+fn app_cancelled(app: &AppHandle) -> bool {
+    app.try_state::<AppState>()
+        .map(|s| s.is_cancelled())
+        .unwrap_or(false)
+}
+
+/// Clear the running latch and the cancel flag before the terminal message
+/// reaches the UI: the previous port set the latch on start and never cleared
+/// it, so every second operation failed with "An operation is already
+/// running.".
+fn clear_running(app: &AppHandle) {
+    if let Some(s) = app.try_state::<AppState>() {
+        s.set_running(None);
+    }
+}
+
+/// Cancel view over `AppState` for core routines: observes both its own
+/// `AtomicCancel` (set by the wait loop) and the live UI cancel flag.
+struct AppCancelBridge {
+    flag: Arc<AtomicCancel>,
+    app: AppHandle,
+}
+
+impl AppCancelBridge {
+    fn new(flag: Arc<AtomicCancel>, app: AppHandle) -> Self {
+        Self { flag, app }
+    }
+}
+
+impl CancelEvent for AppCancelBridge {
+    fn is_set(&self) -> bool {
+        if self.flag.is_set() {
+            return true;
+        }
+        if app_cancelled(&self.app) {
+            self.flag.set();
+            return true;
+        }
+        false
+    }
+
+    fn wait(&self, seconds: f64) -> bool {
+        // Poll in 50 ms slices so a UI cancel is seen promptly.
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs_f64(seconds.max(0.0));
+        loop {
+            if self.is_set() {
+                return true;
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50).min(deadline - now));
+        }
+    }
+}
+
 /// `search_scholar`: validates, stores the request, spawns the worker.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // mirrors the Python search form fields
@@ -100,42 +160,17 @@ pub fn search_scholar(
     state.set_articles(Vec::new());
 
     let cancel = Arc::new(AtomicCancel::new());
-    {
-        // Wire app.cancel → op cancel via the shared watcher (fresh per op).
-        let inner = cancel.clone();
-        let flag = state.cancel_flag_handle();
-        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let stop2 = stop.clone();
-        std::thread::spawn(move || {
-            while !stop2.load(std::sync::atomic::Ordering::SeqCst) {
-                if flag.load(std::sync::atomic::Ordering::SeqCst) {
-                    inner.set();
-                    return;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-        });
-        std::mem::forget(stop);
-    }
-
     state.set_running(Some(Operation::Search));
     let app_handle = app.clone();
+    let catalog = state.catalog.lock().map(|c| c.clone()).unwrap_or_default();
     std::thread::spawn(move || {
         let fetcher = ReqwestFetcher::new();
         let mut client = ScholarClient::new(Box::new(fetcher));
-        struct CancelBridge(Arc<AtomicCancel>);
-        impl CancelEvent for CancelBridge {
-            fn is_set(&self) -> bool {
-                self.0.is_set()
-            }
-            fn wait(&self, s: f64) -> bool {
-                self.0.wait(s)
-            }
-        }
-        let bridge = CancelBridge(cancel.clone());
+        let bridge = AppCancelBridge::new(cancel.clone(), app_handle.clone());
+        let progress_app = app_handle.clone();
         let mut progress_fn = |current: i32, total: i32, phase: &str| {
             emit(
-                &app_handle,
+                &progress_app,
                 &WorkerMessage::Progress {
                     operation: "search".into(),
                     current,
@@ -144,7 +179,7 @@ pub fn search_scholar(
                 },
             );
         };
-        let result: ExtractionResult = {
+        let mut result: ExtractionResult = {
             let progress_opt: Option<SearchProgress> = Some(&mut progress_fn);
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 gss_core::client::scrape_scholar(
@@ -178,9 +213,32 @@ pub fn search_scholar(
                 }
             })
         };
+        apply_catalog_ranks(&mut result.articles, &catalog);
+        if let Some(s) = app_handle.try_state::<AppState>() {
+            s.set_articles(result.articles.clone());
+        }
+        clear_running(&app_handle);
         emit(&app_handle, &WorkerMessage::Result { result });
     });
     Ok(())
+}
+
+/// Label freshly retrieved records from the loaded ranking catalog.
+///
+/// Ranks never affect ordering, so applying them after retrieval is correct
+/// and costs no network. A no-op when nothing has been imported.
+fn apply_catalog_ranks(
+    articles: &mut [gss_core::models::Article],
+    catalog: &gss_core::catalog::JournalCatalog,
+) {
+    if catalog.is_empty() {
+        return;
+    }
+    for article in articles.iter_mut() {
+        let (sjr, sinta) = gss_core::catalog::catalog_matches(article, Some(catalog));
+        let labeled = gss_core::catalog::apply_rank(article, sjr.as_ref());
+        *article = gss_core::catalog::apply_rank(&labeled, sinta.as_ref());
+    }
 }
 
 /// `cancel_operation`: sets the shared flag (button disabled in the UI).
@@ -199,44 +257,81 @@ pub fn check_metadata_pdfs(app: AppHandle, state: State<'_, AppState>) -> Result
     if articles.is_empty() {
         return Err("NOTHING_TO_CHECK".into());
     }
+    let catalog = state.catalog.lock().map(|c| c.clone()).unwrap_or_default();
     state.set_running(Some(Operation::Check));
     let app_handle = app.clone();
     std::thread::spawn(move || {
-        // run_check (L325): enrich then per-article PDF check; errors keep
-        // originals and report a single enrichment-error line.
+        // run_check: enrich (real Crossref), then per-article PDF check.
+        // A metadata failure keeps the originals and still runs the PDF pass;
+        // a PDF failure keeps whatever enrichment already succeeded.
         let total = articles.len();
-        // No network enrichment client in this port yet → metadata step is a
-        // no-op pass-through that preserves the record (the Python path with
-        // a failed provider). PDF checks follow.
-        let mut cancelled = false;
+        let bridge = AppCancelBridge::new(Arc::new(AtomicCancel::new()), app_handle.clone());
+
+        let progress_app = app_handle.clone();
+        let mut enrich_progress = |current: usize, _count: usize, label: &str| {
+            emit(
+                &progress_app,
+                &WorkerMessage::Progress {
+                    operation: "check".into(),
+                    current: current as i32,
+                    total: (total * 2) as i32,
+                    phase: format!("metadata: {label}"),
+                },
+            );
+        };
+        let enrich_error = String::new();
+        let enriched: Vec<gss_core::models::Article> = {
+            let mut transport = ReqwestCrossref::new();
+            let mut client = gss_core::crossref::CrossrefClient::new(&mut transport);
+            let mut lookup = gss_core::crossref::HttpClientLookup {
+                client: &mut client,
+            };
+            gss_core::crossref::enrich_articles(
+                &articles,
+                Some(&catalog),
+                Some(&bridge),
+                Some(&mut enrich_progress),
+                &mut lookup,
+                None,
+                None,
+                true,
+            )
+        };
+
         let mut results: Vec<gss_core::models::Article> = Vec::new();
         let resolver = gss_core::pdf::PublicResolver("93.184.216.34".to_string());
         let mut fetcher = ReqwestPdfFetcher::new();
-        for (i, article) in articles.iter().enumerate() {
-            let position = i + 1;
-            let checked = check_one(
+        for (index, article) in enriched.iter().enumerate() {
+            if bridge.is_set() {
+                results.extend(enriched[index..].iter().cloned());
+                break;
+            }
+            let position = total + index + 1;
+            match check_one(
                 article,
                 &mut fetcher,
                 &resolver,
                 &app_handle,
                 position,
                 total * 2,
-            );
-            match checked {
+                Some(&bridge),
+            ) {
                 Ok(a) => results.push(a),
-                Err(_) => {
-                    cancelled = true;
-                    results.push(article.clone());
-                }
+                Err(()) => results.push(article.clone()),
             }
         }
 
+        let cancelled = bridge.is_set();
+        if let Some(s) = app_handle.try_state::<AppState>() {
+            s.set_articles(results.clone());
+        }
         let payload = serde_json::json!({
             "articles": results,
-            "enrich_error": "",
+            "enrich_error": enrich_error,
             "cancelled": cancelled,
             "total": total,
         });
+        clear_running(&app_handle);
         emit(
             &app_handle,
             &WorkerMessage::TaskResult {
@@ -255,15 +350,21 @@ fn check_one(
     app: &AppHandle,
     position: usize,
     total: usize,
+    cancel: Option<&dyn CancelEvent>,
 ) -> Result<gss_core::models::Article, ()> {
-    let checked = gss_core::pdf::check_pdf_availability(article, None, fetcher, resolver);
+    let checked = gss_core::pdf::check_pdf_availability(article, cancel, fetcher, resolver);
+    let label = if article.title.is_empty() {
+        "record"
+    } else {
+        &article.title
+    };
     emit(
         app,
         &WorkerMessage::Progress {
             operation: "check".into(),
             current: position as i32,
             total: total as i32,
-            phase: format!("PDF: {}", article.title),
+            phase: format!("PDF: {label}"),
         },
     );
     Ok(checked)
@@ -413,10 +514,11 @@ pub fn download_pdfs(
                 },
             );
         };
+        let bridge = AppCancelBridge::new(Arc::new(AtomicCancel::new()), app_handle.clone());
         let results = gss_core::pdf::download_pdfs(
             &selected,
             Path::new(&folder),
-            None,
+            Some(&bridge),
             Some(&mut progress),
             &mut fetcher,
             gss_core::pdf::DEFAULT_MAX_BYTES,
@@ -429,6 +531,7 @@ pub fn download_pdfs(
             "folder": folder,
             "total": total,
         });
+        clear_running(&app_handle);
         emit(
             &app_handle,
             &WorkerMessage::TaskResult {
@@ -454,6 +557,8 @@ pub fn import_ranking(
     if !Path::new(&path).is_file() {
         return Err(format!("No file found at {path}."));
     }
+    // Staging clone: a rejected file leaves the loaded records untouched.
+    let existing = state.catalog.lock().map(|c| c.clone()).unwrap_or_default();
     state.set_running(Some(Operation::Import));
     let app_handle = app.clone();
     std::thread::spawn(move || {
@@ -470,7 +575,7 @@ pub fn import_ranking(
                 phase: format!("reading {name}"),
             },
         );
-        let mut staged = JournalCatalogShim::load(&state_snapshot(&app_handle));
+        let mut staged = existing;
         let result = staged.import_file(Path::new(&path), default_year);
         match result {
             Ok(count) => {
@@ -483,13 +588,33 @@ pub fn import_ranking(
                         phase: format!("{count} records read"),
                     },
                 );
-                let payload = serde_json::json!({
-                    "catalog": staged.records_json(),
+                // Commit the staged catalog, then re-label what is on screen
+                // (`_apply_catalog_to_current`): no re-search required.
+                let mut relabeled: Option<Vec<gss_core::models::Article>> = None;
+                if let Some(s) = app_handle.try_state::<AppState>() {
+                    if let Ok(mut guard) = s.catalog.lock() {
+                        *guard = staged.clone();
+                    }
+                    let current = s.articles();
+                    if !current.is_empty() {
+                        let mut updated = current;
+                        let gained = relabel_articles(&mut updated, &staged);
+                        s.set_articles(updated.clone());
+                        let _ = gained;
+                        relabeled = Some(updated);
+                    }
+                }
+                let mut payload = serde_json::json!({
+                    "catalog": catalog_records_json(&staged),
                     "count": count,
                     "total": staged.len(),
                     "path": path,
                     "year": default_year,
                 });
+                if let Some(articles) = relabeled {
+                    payload["articles"] = serde_json::to_value(&articles).unwrap_or_default();
+                }
+                clear_running(&app_handle);
                 emit(
                     &app_handle,
                     &WorkerMessage::TaskResult {
@@ -499,6 +624,7 @@ pub fn import_ranking(
                 );
             }
             Err(message) => {
+                clear_running(&app_handle);
                 emit(
                     &app_handle,
                     &WorkerMessage::TaskError {
@@ -510,6 +636,31 @@ pub fn import_ranking(
         }
     });
     Ok(())
+}
+
+/// Re-label stored records from a catalog; returns how many gained a label.
+fn relabel_articles(
+    articles: &mut [gss_core::models::Article],
+    catalog: &gss_core::catalog::JournalCatalog,
+) -> usize {
+    if catalog.is_empty() {
+        return 0;
+    }
+    let mut gained = 0;
+    for article in articles.iter_mut() {
+        let before_sjr = !article.sjr_quartile.is_empty();
+        let before_sinta = !article.sinta_rank.is_empty();
+        let (sjr, sinta) = gss_core::catalog::catalog_matches(article, Some(catalog));
+        let labeled = gss_core::catalog::apply_rank(article, sjr.as_ref());
+        let labeled = gss_core::catalog::apply_rank(&labeled, sinta.as_ref());
+        if (!before_sjr && !labeled.sjr_quartile.is_empty())
+            || (!before_sinta && !labeled.sinta_rank.is_empty())
+        {
+            gained += 1;
+        }
+        *article = labeled;
+    }
+    gained
 }
 
 fn catalog_records_json(catalog: &gss_core::catalog::JournalCatalog) -> Vec<serde_json::Value> {
@@ -531,56 +682,38 @@ fn catalog_records_json(catalog: &gss_core::catalog::JournalCatalog) -> Vec<serd
         .collect()
 }
 
-fn state_snapshot(app: &AppHandle) -> Vec<serde_json::Value> {
-    app.try_state::<AppState>()
-        .map(|s| {
-            s.catalog
-                .lock()
-                .map(|c| catalog_records_json(&c))
-                .unwrap_or_default()
-        })
-        .unwrap_or_default()
+/// Crossref transport on top of reqwest: no proxy, no redirects (Crossref
+/// echoes the requested DOI, so a redirect means an unexpected answer).
+struct ReqwestCrossref {
+    client: reqwest::blocking::Client,
 }
 
-/// Serializable catalog shim: JournalCatalog itself is reconstructed from
-/// records via re-import of a temp CSV (staged-clone semantics preserved:
-/// a rejected file leaves the loaded records untouched).
-struct JournalCatalogShim {
-    catalog: gss_core::catalog::JournalCatalog,
-}
-
-impl JournalCatalogShim {
-    fn load(_records: &[serde_json::Value]) -> Self {
+impl ReqwestCrossref {
+    fn new() -> Self {
         Self {
-            catalog: gss_core::catalog::JournalCatalog::new(),
+            client: reqwest::blocking::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("reqwest crossref client"),
         }
     }
+}
 
-    fn import_file(&mut self, path: &Path, default_year: Option<i32>) -> Result<usize, String> {
-        self.catalog.import_file(path, default_year)
-    }
-
-    fn len(&self) -> usize {
-        self.catalog.len()
-    }
-
-    fn records_json(&self) -> Vec<serde_json::Value> {
-        self.catalog
-            .records()
-            .iter()
-            .map(|r| {
-                serde_json::json!({
-                    "title": r.title,
-                    "titleKey": r.title_key,
-                    "issns": r.issns,
-                    "kind": r.kind,
-                    "rank": r.rank,
-                    "year": r.year,
-                    "category": r.category,
-                    "sourceUrl": r.source_url,
-                })
-            })
-            .collect()
+impl gss_core::crossref::CrossrefFetcher for ReqwestCrossref {
+    fn get(
+        &mut self,
+        url: &str,
+        headers: &[(String, String)],
+    ) -> Result<(Vec<u8>, u16), TransportError> {
+        let mut request = self.client.get(url);
+        for (k, v) in headers {
+            request = request.header(k, v);
+        }
+        let response = request.send().map_err(|_| TransportError)?;
+        let status = response.status().as_u16();
+        let body = response.bytes().map_err(|_| TransportError)?.to_vec();
+        Ok((body, status))
     }
 }
 
@@ -608,10 +741,11 @@ pub fn export_citations(
     let app_handle = app.clone();
     std::thread::spawn(move || {
         let total = articles.len();
-        // Progress over total*2+1 (resolve + note assembly + write).
-        let progress = |current: usize, t: usize, phase: &str| {
+        let bridge = AppCancelBridge::new(Arc::new(AtomicCancel::new()), app_handle.clone());
+        let progress_app = app_handle.clone();
+        let mut progress = |current: usize, t: usize, phase: &str| {
             emit(
-                &app_handle,
+                &progress_app,
                 &WorkerMessage::Progress {
                     operation: "citations".into(),
                     current: current as i32,
@@ -620,42 +754,9 @@ pub fn export_citations(
                 },
             );
         };
-        // Cancellation: resolve_citations with a live cancel event.
-        let cancel = Arc::new(AtomicCancel::new());
-        {
-            let inner = cancel.clone();
-            let handle = app_handle.clone();
-            std::thread::spawn(move || loop {
-                if let Some(s) = handle.try_state::<AppState>() {
-                    if s.is_cancelled() {
-                        inner.set();
-                        return;
-                    }
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            });
-        }
-        struct CancelBridge(Arc<AtomicCancel>);
-        impl CancelEvent for CancelBridge {
-            fn is_set(&self) -> bool {
-                self.0.is_set()
-            }
-            fn wait(&self, s: f64) -> bool {
-                self.0.wait(s)
-            }
-        }
-        let bridge = CancelBridge(cancel);
-        struct NullFetcher;
-        impl gss_core::crossref::CrossrefFetcher for NullFetcher {
-            fn get(
-                &mut self,
-                _url: &str,
-                _headers: &[(String, String)],
-            ) -> Result<(Vec<u8>, u16), TransportError> {
-                Err(TransportError)
-            }
-        }
-        let mut transport = NullFetcher;
+        // Real Crossref resolution; unresolved records stay explicitly
+        // unverified with their Scholar fields and a review note.
+        let mut transport = ReqwestCrossref::new();
         let mut client = gss_core::crossref::CrossrefClient::new(&mut transport);
         let mut lookup = gss_core::crossref::HttpClientLookup {
             client: &mut client,
@@ -663,15 +764,15 @@ pub fn export_citations(
         let records = gss_core::crossref::resolve_citations(
             &articles,
             Some(&bridge),
-            None,
+            Some(&mut progress),
             &mut lookup,
             None,
             None,
         );
-        let _ = progress;
         let cancelled = bridge.is_set();
         if cancelled {
             // Cancelled → return WITHOUT writing the file.
+            clear_running(&app_handle);
             let payload = serde_json::json!({
                 "fmt": format,
                 "path": path,
@@ -705,6 +806,7 @@ pub fn export_citations(
                     "written": true,
                     "cancelled": false,
                 });
+                clear_running(&app_handle);
                 emit(
                     &app_handle,
                     &WorkerMessage::TaskResult {
@@ -714,6 +816,7 @@ pub fn export_citations(
                 );
             }
             Err(e) => {
+                clear_running(&app_handle);
                 emit(
                     &app_handle,
                     &WorkerMessage::TaskError {
@@ -725,6 +828,52 @@ pub fn export_citations(
         }
     });
     Ok(())
+}
+
+/// Saved window settings (UI defaults when nothing is stored yet).
+#[tauri::command]
+pub fn load_settings() -> crate::settings::UiSettings {
+    crate::settings::load()
+}
+
+/// Persist window settings; the UI ignores failures (session keeps working).
+#[tauri::command]
+pub fn save_settings(settings: crate::settings::UiSettings) -> Result<(), String> {
+    crate::settings::save(&settings)
+}
+
+/// `reveal_path`: select a file (or open a folder) in File Explorer. Windows
+/// `explorer` returns a non-zero exit code even on success, so the child is
+/// simply spawned and never awaited.
+#[tauri::command]
+pub fn reveal_path(path: String) {
+    if path.trim().is_empty() {
+        return;
+    }
+    let target = Path::new(&path);
+    let mut command = std::process::Command::new("explorer");
+    if target.is_file() {
+        // `/select,` must stay a single argument: it is one switch.
+        command.arg(format!("/select,{}", target.display()));
+    } else {
+        command.arg(target);
+    }
+    let _ = command.spawn();
+}
+
+/// `open_url`: open a result link in the default browser. `window.open` is
+/// inert inside the Tauri webview without the shell plugin, so the link column
+/// and the row context menu route through `cmd /c start` instead.
+#[tauri::command]
+pub fn open_url(url: String) {
+    let url = url.trim();
+    if url.is_empty() {
+        return;
+    }
+    // `start` treats the first quoted argument as the window title.
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", "start", "", url])
+        .spawn();
 }
 
 /// `export_excel` — synchronous on the UI thread (Python contract).
@@ -844,4 +993,97 @@ pub fn selfcheck_layout() {
         std::process::exit(1);
     }
     println!("selfcheck-layout ok");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gss_core::models::Article;
+
+    fn catalog_from(csv: &str) -> gss_core::catalog::JournalCatalog {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ranks.csv");
+        std::fs::write(&path, csv).unwrap();
+        let mut catalog = gss_core::catalog::JournalCatalog::new();
+        let count = catalog.import_file(&path, Some(2023)).unwrap();
+        assert!(count > 0);
+        catalog
+    }
+
+    const CSV: &str = "Title,Issn,SJR Best Quartile,Year,Categories,Source\n\
+Machine learning,0885-6125,Q1,2023,Artificial Intelligence,https://scimagojr.example/ml\n";
+
+    #[test]
+    fn relabel_fills_rank_for_matching_identity() {
+        let catalog = catalog_from(CSV);
+        // Enriched record: real journal + ISSN (what a Crossref lookup supplies).
+        let mut articles = vec![Article {
+            title: "Machine learning".into(),
+            journal: "Machine learning".into(),
+            issns: vec!["0885-6125".into()],
+            ..Article::default()
+        }];
+        let gained = relabel_articles(&mut articles, &catalog);
+        assert_eq!(gained, 1);
+        assert_eq!(articles[0].sjr_quartile, "Q1");
+        assert_eq!(articles[0].sjr_year, Some(2023));
+        assert!(articles[0].sjr_source_url.contains("scimagojr.example"));
+    }
+
+    #[test]
+    fn relabel_ignores_unidentified_records() {
+        // Scholar-only metadata (no journal, no ISSN) must never be guessed at:
+        // this mirrors the Python catalog contract and leaves the row unknown.
+        let catalog = catalog_from(CSV);
+        let mut articles = vec![Article {
+            title: "Machine learning".into(),
+            ..Article::default()
+        }];
+        let gained = relabel_articles(&mut articles, &catalog);
+        assert_eq!(gained, 0);
+        assert_eq!(articles[0].sjr_quartile, "");
+    }
+
+    #[test]
+    fn relabel_counts_only_newly_gained_labels() {
+        let catalog = catalog_from(CSV);
+        let mut articles = vec![Article {
+            title: "Machine learning".into(),
+            journal: "Machine learning".into(),
+            issns: vec!["0885-6125".into()],
+            sjr_quartile: "Q4".into(),
+            ..Article::default()
+        }];
+        // Already labelled → not a gain, but the catalog value still wins.
+        let gained = relabel_articles(&mut articles, &catalog);
+        assert_eq!(gained, 0);
+        assert_eq!(articles[0].sjr_quartile, "Q1");
+    }
+
+    #[test]
+    fn empty_catalog_is_a_no_op() {
+        let catalog = gss_core::catalog::JournalCatalog::new();
+        let mut articles = vec![Article {
+            title: "Machine learning".into(),
+            journal: "Machine learning".into(),
+            issns: vec!["0885-6125".into()],
+            ..Article::default()
+        }];
+        let gained = relabel_articles(&mut articles, &catalog);
+        assert_eq!(gained, 0);
+        assert_eq!(articles[0].sjr_quartile, "");
+    }
+
+    #[test]
+    fn search_phase_ranking_labels_use_the_same_catalog() {
+        let catalog = catalog_from(CSV);
+        let mut articles = vec![Article {
+            title: "Machine learning".into(),
+            journal: "Machine learning".into(),
+            issns: vec!["0885-6125".into()],
+            ..Article::default()
+        }];
+        apply_catalog_ranks(&mut articles, &catalog);
+        assert_eq!(articles[0].sjr_quartile, "Q1");
+    }
 }

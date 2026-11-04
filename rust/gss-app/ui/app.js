@@ -62,8 +62,18 @@ let summaryBase = "No search has run yet.";
 let rankingCount = 0;
 let currentYear = new Date().getFullYear();
 const selection = new Set(); // stored indices in click order
+let sortKey = null; // column key or null (source order)
+let sortDir = 1; // 1 ascending, -1 descending
+let resultsQuery = ""; // session-only free-text filter
+let lastExportFolder = ""; // for the "Open folder" button
+let ctxTarget = null; // stored index of the row context menu
 
 const $ = (id) => document.getElementById(id);
+
+function joinPath(folder, filename) {
+  if (!folder) return filename;
+  return folder.endsWith("\\") || folder.endsWith("/") ? folder + filename : folder + "\\" + filename;
+}
 
 // ---- year options ----
 function yearFilterOptions(y) {
@@ -111,15 +121,163 @@ function init() {
   $("btnCloseDetail").onclick = () => $("detailDialog").close();
   $("btnCloseCitations").onclick = () => $("citationsDialog").close();
   $("btnDoExport").onclick = startCitationExport;
-  $("yearPreset").onchange = onYearPresetChanged;
-  $("pdfFilter").onchange = renderResults;
+  $("pdfFilter").onchange = () => {
+    renderResults();
+    scheduleSave();
+  };
   $("tableBody").onclick = onTableClick;
   $("tableBody").ondblclick = onTableDblClick;
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !running && document.activeElement === $("query")) startSearch();
-    if (e.key === "Escape" && running) cancelOperation();
+  $("tableBody").oncontextmenu = onTableContextMenu;
+  $("btnReveal").onclick = () => {
+    if (lastExportFolder) invoke("reveal_path", { path: lastExportFolder }).catch(() => {});
+  };
+  $("btnErrorClose").onclick = () => $("errorDialog").close();
+  $("btnFileMenu").onclick = (e) => {
+    e.stopPropagation();
+    toggleMenu("fileMenu", "btnFileMenu", !$("fileMenu").classList.contains("open"));
+  };
+  $("menuExportCitations").onclick = () => {
+    toggleMenu("fileMenu", "btnFileMenu", false);
+    openCitationsDialog();
+  };
+  $("menuOpenFolder").onclick = () => {
+    toggleMenu("fileMenu", "btnFileMenu", false);
+    if (lastExportFolder) invoke("reveal_path", { path: lastExportFolder }).catch(() => {});
+  };
+  for (const th of document.querySelectorAll("th.sortable")) {
+    th.onclick = () => onHeaderClick(th.dataset.key);
+  }
+  $("resultsSearch").oninput = () => {
+    resultsQuery = $("resultsSearch").value.trim();
+    scheduleResultsRender();
+  };
+  document.addEventListener("click", closeMenus);
+  document.addEventListener("keydown", onKeyDown);
+  for (const id of ["query", "pages", "folder", "rankingPath", "rankingYear", "yearFrom", "yearTo"]) {
+    $(id).addEventListener("input", scheduleSave);
+  }
+  $("rankingEnabled").addEventListener("change", scheduleSave);
+  $("yearPreset").onchange = () => {
+    onYearPresetChanged();
+    renderResults();
+    scheduleSave();
+  };
+  window.addEventListener("beforeunload", () => {
+    saveSettingsNow();
   });
   setIdleState();
+  loadSettings();
+}
+
+// ---- keyboard ----
+function onKeyDown(e) {
+  const active = document.activeElement;
+  const inField = active && active.closest("input, textarea, select");
+  if (e.key === "Escape") {
+    if (closeMenus()) {
+      e.preventDefault();
+      return;
+    }
+    if (running) cancelOperation();
+    return;
+  }
+  if (running) return;
+  if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === "e") {
+    e.preventDefault();
+    openCitationsDialog();
+    return;
+  }
+  if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === "a" && !inField) {
+    e.preventDefault();
+    for (const [i] of visibleArticles()) selection.add(i);
+    renderResults();
+    return;
+  }
+  if (e.key === "Enter") {
+    // Deliberately narrower than the Python global binding: years and the
+    // query start a search, but typing in pages/folder/ranking fields does not.
+    if (active === $("query") || active === $("yearFrom") || active === $("yearTo")) {
+      startSearch();
+    }
+  }
+}
+
+// ---- menus ----
+function toggleMenu(menuId, buttonId, open) {
+  const menu = $(menuId);
+  const btn = $(buttonId);
+  menu.classList.toggle("open", open);
+  btn.classList.toggle("open", open);
+}
+
+function closeMenus() {
+  let closed = false;
+  for (const [menuId, buttonId] of [["fileMenu", "btnFileMenu"]]) {
+    if ($(menuId) && $(menuId).classList.contains("open")) {
+      toggleMenu(menuId, buttonId, false);
+      closed = true;
+    }
+  }
+  const ctx = document.querySelector(".ctxmenu");
+  if (ctx) {
+    ctx.remove();
+    ctxTarget = null;
+    closed = true;
+  }
+  return closed;
+}
+
+// ---- sortable columns ----
+function onHeaderClick(key) {
+  if (sortKey === key) {
+    sortDir = sortDir === 1 ? -1 : 1;
+  } else {
+    sortKey = key;
+    sortDir = 1;
+  }
+  renderResults();
+}
+
+function sortValue(a, key) {
+  switch (key) {
+    case "title":
+      return (a.title || "").toLocaleLowerCase();
+    case "authors":
+      return (a.authors || "").toLocaleLowerCase();
+    case "score": {
+      const score = a.relevanceScore ?? a.relevance_score;
+      return score == null ? -1 : Number(score);
+    }
+    case "rank":
+      return [a.sjrQuartile ?? a.sjr_quartile, a.sintaRank ?? a.sinta_rank]
+        .filter(Boolean).join(" ").toLocaleLowerCase();
+    case "pdf": {
+      // Group sensibly: available → unknown → unavailable.
+      const status = a.pdfStatus ?? a.pdf_status;
+      return status === "available" ? 0 : status === "unavailable" ? 2 : 1;
+    }
+    case "link":
+      return (a.link || "").toLocaleLowerCase();
+    default:
+      return "";
+  }
+}
+
+function sortRows(rows) {
+  if (!sortKey) return rows;
+  // Copy: the filter result is rebuilt per render, but sorting in place would
+  // still alias the caller's array.
+  const sorted = rows.slice();
+  sorted.sort((x, y) => {
+    const a = sortValue(x[1], sortKey);
+    const b = sortValue(y[1], sortKey);
+    let cmp;
+    if (typeof a === "number" && typeof b === "number") cmp = a - b;
+    else cmp = String(a).localeCompare(String(b));
+    // Stable tie-break on the stored index keeps equal rows in retrieval order.
+    return cmp !== 0 ? cmp * sortDir : x[0] - y[0];
+  });
+  return sorted;
 }
 
 function onYearPresetChanged() {
@@ -128,7 +286,6 @@ function onYearPresetChanged() {
   $("yearFrom").disabled = !custom || running;
   $("yearTo").disabled = !custom || running;
   updateAppliedYear();
-  renderResults();
 }
 
 function currentYearBounds() {
@@ -152,9 +309,10 @@ function updateAppliedYear() {
 function setRunning(operation) {
   running = true;
   currentOperation = operation;
-  for (const id of ["btnSearch", "btnCheck", "btnDownload", "btnDetails", "btnImport", "btnBrowse", "btnExportExcel", "btnExportCsv", "btnExportCitations"]) {
+  for (const id of ["btnSearch", "btnCheck", "btnDownload", "btnDetails", "btnImport", "btnBrowse", "btnExportExcel", "btnExportCsv", "btnExportCitations", "menuExportCitations", "menuOpenFolder"]) {
     $(id).disabled = true;
   }
+  closeMenus();
   $("btnCancel").disabled = false;
   $("query").disabled = true;
   $("pages").disabled = true;
@@ -169,6 +327,9 @@ function setRunning(operation) {
 }
 
 function setIdleState() {
+  // Controls only. Rendering is the caller's job: this function must never
+  // call renderResults() (that edge is what made v3.0.0 recurse to a stack
+  // overflow inside init() and left every control dead).
   running = false;
   currentOperation = null;
   const hasArticles = storedArticles.length > 0;
@@ -183,6 +344,9 @@ function setIdleState() {
   $("btnExportExcel").disabled = !hasVisible;
   $("btnExportCsv").disabled = !hasVisible;
   $("btnExportCitations").disabled = !hasVisible;
+  $("menuExportCitations").disabled = !hasVisible;
+  $("menuOpenFolder").disabled = !lastExportFolder;
+  $("btnReveal").hidden = !lastExportFolder;
   $("query").disabled = false;
   $("pages").disabled = false;
   $("folder").disabled = false;
@@ -191,7 +355,10 @@ function setIdleState() {
   $("rankingEnabled").disabled = false;
   $("pdfFilter").disabled = false;
   $("yearPreset").disabled = false;
-  onYearPresetChanged();
+  const customYear = $("yearPreset").selectedIndex === 4;
+  $("yearFrom").disabled = !customYear;
+  $("yearTo").disabled = !customYear;
+  updateAppliedYear();
 }
 
 // ---- status helpers ----
@@ -208,11 +375,21 @@ function setProgress(current, total) {
 // ---- search ----
 async function startSearch() {
   if (running) return;
+  const pagesText = $("pages").value.trim();
+  const pagesValue = /^\d+$/.test(pagesText) ? Number(pagesText) : NaN;
+  if (!Number.isInteger(pagesValue)) {
+    setStatus("Check search setup", "Page count must be a whole number.", "error");
+    return;
+  }
+  if (pagesValue <= 0) {
+    setStatus("Check search setup", "Page count must be greater than zero.", "error");
+    return;
+  }
   const { from, to } = currentYearBounds();
   try {
     await invoke("search_scholar", {
       query: $("query").value,
-      pages: parseInt($("pages").value, 10) || 1,
+      pages: pagesValue,
       rankingEnabled: $("rankingEnabled").checked,
       outputFolder: $("folder").value,
       yearFrom: from,
@@ -346,7 +523,7 @@ async function startCitationExport() {
   }
   const folder = currentRequest?.outputFolder || $("folder").value.trim();
   const filename = fmt === "bibtex" ? DEFAULT_EXPORT_NAMES.bibtex : DEFAULT_EXPORT_NAMES.ris;
-  const path = folder ? folder + "\\" + filename : filename;
+  const path = joinPath(folder, filename);
   $("citationsDialog").close();
   setStatus(OPERATION_HEADINGS.citations, "Resolving citations against Crossref, then writing the file. Unresolved records keep their known fields and a review note.", "running");
   setRunning("citations");
@@ -367,7 +544,7 @@ async function exportSpreadsheet(kind) {
   }
   const folder = currentRequest?.outputFolder || $("folder").value.trim();
   const filename = kind === "excel" ? DEFAULT_EXPORT_NAMES.excel : DEFAULT_EXPORT_NAMES.csv;
-  const path = folder ? folder + "\\" + filename : filename;
+  const path = joinPath(folder, filename);
   const cmdName = kind === "excel" ? "export_excel" : "export_csv";
   try {
     const message = await invoke(cmdName, { articles: visible, path });
@@ -376,23 +553,33 @@ async function exportSpreadsheet(kind) {
       ? `Exported ${visible.length} result(s) to ${path}.`
       : `Exported ${visible.length} filtered result(s) of ${total} stored records to ${path}.`;
     setStatus("Ready", detail, "ready");
+    rememberExportFolder(path);
   } catch (err) {
     const msg = String(err).replace("Export failed: ", "");
     setStatus("Ready", `Export failed: ${msg}`, "error");
-    alert(`Export failed\n\n${msg}`);
+    showError("Export failed", msg);
   }
 }
 
 // ---- table rendering (iid = article-{storedIndex}) ----
 function filteredArticles() {
-  return storedArticles
+  const needle = resultsQuery.toLocaleLowerCase();
+  const rows = storedArticles
     .map((a, i) => [i, a])
     .filter(([, a]) => {
-      if (pdfFilter === "All") return true;
-      const want = pdfFilter === "Public PDF available" ? "available"
-        : pdfFilter === "No public PDF found" ? "unavailable" : "unknown";
-      return a.pdfStatus === want || a.pdf_status === want;
+      if (pdfFilter !== "All") {
+        const want = pdfFilter === "Public PDF available" ? "available"
+          : pdfFilter === "No public PDF found" ? "unavailable" : "unknown";
+        const status = a.pdfStatus ?? a.pdf_status;
+        if (status !== want) return false;
+      }
+      if (!needle) return true;
+      const haystack = [a.title, a.authors, a.journal]
+        .map((v) => String(v ?? "").toLocaleLowerCase())
+        .join("\n");
+      return haystack.includes(needle);
     });
+  return sortRows(rows);
 }
 function visibleArticles() {
   return filteredArticles();
@@ -433,23 +620,39 @@ function renderResults() {
   if (rows.length === 0) {
     if (hasAny) {
       $("emptyTitle").textContent = "No papers match this filter";
-      $("emptyDetail").textContent = "Change the PDF filter to see the stored records. Filtering never removes stored results.";
+      $("emptyDetail").textContent = resultsQuery
+        ? "Clear the results filter or the PDF filter to see the stored records. Filtering never removes stored results."
+        : "Change the PDF filter to see the stored records. Filtering never removes stored results.";
     } else {
       $("emptyTitle").textContent = "No results yet";
       $("emptyDetail").textContent = "Run a search to review Google Scholar results here.";
     }
   }
+  updateSortIndicators();
   refreshSummary();
+  // One-way edge: render → idle. setIdleState() never renders.
   setIdleState();
+}
+
+function updateSortIndicators() {
+  for (const th of document.querySelectorAll("th.sortable")) {
+    const base = th.textContent.replace(/\s*[\u25b2\u25bc]$/, "");
+    const active = th.dataset.key === sortKey;
+    th.classList.toggle("sorted", active);
+    th.textContent = active ? `${base} ${sortDir === 1 ? "\u25b2" : "\u25bc"}` : base;
+  }
 }
 
 function refreshSummary() {
   const rows = filteredArticles();
   const total = storedArticles.length;
-  if (total === 0 || (pdfFilter === "All" && rows.length === total)) {
+  const filtering = pdfFilter !== "All" || resultsQuery !== "";
+  if (total === 0 || !filtering) {
     $("summary").textContent = summaryBase;
-  } else {
+  } else if (pdfFilter !== "All") {
     $("summary").textContent = `${summaryBase} | filter '${pdfFilter}': ${rows.length} of ${total} shown`;
+  } else {
+    $("summary").textContent = `${summaryBase} | matching '${resultsQuery}': ${rows.length} of ${total} shown`;
   }
 }
 
@@ -468,7 +671,7 @@ function onTableClick(e) {
     const i = parseInt(row.dataset.iid.replace("article-", ""), 10);
     row.classList.toggle("selected", selection.has(i));
   });
-  setIdleState();
+  setIdleState(); // selection changed → export/detail buttons follow it
 }
 
 function onTableDblClick(e) {
@@ -476,7 +679,63 @@ function onTableDblClick(e) {
   if (!tr) return;
   const index = parseInt(tr.dataset.iid.replace("article-", ""), 10);
   const a = storedArticles[index];
-  if (a && (a.link || "")) window.open(a.link, "_blank");
+  if (a && (a.link || "")) openUrl(a.link);
+}
+
+function openUrl(url) {
+  if (!url) return;
+  invoke("open_url", { url }).catch(() => {});
+}
+
+// ---- row context menu ----
+function onTableContextMenu(e) {
+  const tr = e.target.closest("tr[data-iid]");
+  if (!tr) return;
+  e.preventDefault();
+  closeMenus();
+  const index = parseInt(tr.dataset.iid.replace("article-", ""), 10);
+  const a = storedArticles[index];
+  if (!a) return;
+  ctxTarget = index;
+  const link = a.link || "";
+  const doi = a.doi || "";
+  const localPath = a.pdfLocalPath ?? a.pdf_local_path ?? "";
+  const menu = document.createElement("div");
+  menu.className = "ctxmenu";
+  menu.style.left = `${e.clientX}px`;
+  menu.style.top = `${e.clientY}px`;
+  const items = [
+    ["Open link", !link, () => openUrl(link)],
+    ["Reveal PDF in Explorer", !localPath, () => invoke("reveal_path", { path: localPath }).catch(() => {})],
+    ["Copy title", !a.title, () => copyText(a.title || "")],
+    ["Copy DOI", !doi, () => copyText(doi)],
+    ["Details", false, () => openDetailFor(index)],
+  ];
+  for (const [label, disabled, action] of items) {
+    const btn = document.createElement("button");
+    btn.textContent = label;
+    btn.disabled = disabled;
+    btn.onclick = () => {
+      closeMenus();
+      action();
+    };
+    menu.appendChild(btn);
+  }
+  document.body.appendChild(menu);
+}
+
+function copyText(text) {
+  if (!text) return;
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).catch(() => {});
+  }
+}
+
+function openDetailFor(index) {
+  const a = storedArticles[index];
+  if (!a) return;
+  $("detailText").textContent = articleDetailText(a);
+  $("detailDialog").showModal();
 }
 
 // ---- details dialog ----
@@ -485,11 +744,7 @@ function openDetail() {
     setStatus("No paper selected", "Select a row to see its journal, ranking and public-PDF details.", "warning");
     return;
   }
-  const index = [...selection][0];
-  const a = storedArticles[index];
-  if (!a) return;
-  $("detailText").textContent = articleDetailText(a);
-  $("detailDialog").showModal();
+  openDetailFor([...selection][0]);
 }
 
 function articleDetailText(a) {
@@ -502,19 +757,19 @@ function articleDetailText(a) {
   lines.push(`ISSN: ${(a.issns ?? []).length ? a.issns.join(", ") : "none"}`);
   lines.push(`Publication year: ${a.publicationYear ?? a.publication_year ?? none}`);
   lines.push("");
-  lines.push(`SJR quartile: ${a.sjrQuartile ?? a.sjr_quartile || none}`);
+  lines.push(`SJR quartile: ${(a.sjrQuartile ?? a.sjr_quartile) || none}`);
   if (a.sjrYear ?? a.sjr_year) lines.push(`SJR ranking year: ${a.sjrYear ?? a.sjr_year}`);
-  lines.push(`SJR category: ${a.sjrCategory ?? a.sjr_category || none}`);
-  lines.push(`SJR source: ${a.sjrSourceUrl ?? a.sjr_source_url || "no imported record"}`);
-  lines.push(`SINTA rank: ${a.sintaRank ?? a.sinta_rank || none}`);
+  lines.push(`SJR category: ${(a.sjrCategory ?? a.sjr_category) || none}`);
+  lines.push(`SJR source: ${(a.sjrSourceUrl ?? a.sjr_source_url) || "no imported record"}`);
+  lines.push(`SINTA rank: ${(a.sintaRank ?? a.sinta_rank) || none}`);
   if (a.sintaYear ?? a.sinta_year) lines.push(`SINTA ranking year: ${a.sintaYear ?? a.sinta_year}`);
-  lines.push(`SINTA source: ${a.sintaSourceUrl ?? a.sinta_source_url || "no imported record"}`);
+  lines.push(`SINTA source: ${(a.sintaSourceUrl ?? a.sinta_source_url) || "no imported record"}`);
   lines.push("");
   const status = a.pdfStatus ?? a.pdf_status;
   const localPath = a.pdfLocalPath ?? a.pdf_local_path;
   lines.push(`Public PDF: ${status === "available" ? (localPath ? "Downloaded" : "Public PDF") : status === "unavailable" ? "No public PDF" : "Unknown"}`);
-  lines.push(`PDF detail: ${a.pdfDetail ?? a.pdf_detail || "not checked"}`);
-  lines.push(`PDF source: ${a.pdfSourceUrl ?? a.pdf_source_url || "none"}`);
+  lines.push(`PDF detail: ${(a.pdfDetail ?? a.pdf_detail) || "not checked"}`);
+  lines.push(`PDF source: ${(a.pdfSourceUrl ?? a.pdf_source_url) || "none"}`);
   lines.push(`PDF local path: ${localPath || "not downloaded"}`);
   lines.push("");
   lines.push(DETAIL_DISCLAIMER);
@@ -578,9 +833,23 @@ async function onWorkerMessage(msg) {
       rankingCount = p.count ?? 0;
       $("rankingNotice").textContent = rankingCount > 0 ? `${rankingCount} ranking records` : NO_RANKING_NOTICE;
       const year = p.year;
+      // The backend re-labels whatever is on screen; adopt it without a re-search.
+      let gained = 0;
+      if (Array.isArray(p.articles) && p.articles.length === storedArticles.length) {
+        gained = p.articles.filter((a, i) => {
+          const before = storedArticles[i] || {};
+          const hadSjr = !!(before.sjrQuartile ?? before.sjr_quartile);
+          const hadSinta = !!(before.sintaRank ?? before.sinta_rank);
+          const hasSjr = !!(a.sjrQuartile ?? a.sjr_quartile);
+          const hasSinta = !!(a.sintaRank ?? a.sinta_rank);
+          return (!hadSjr && hasSjr) || (!hadSinta && hasSinta);
+        }).length;
+        storedArticles = p.articles;
+      }
       setStatus("Rankings imported",
         `${p.count} ranking records${p.total ? ` (${p.total} total)` : ""}.` +
-        (year ? ` Ranking year ${year} was used for records without one.` : " Records without a year stay unknown."),
+        (year ? ` Ranking year ${year} was used for records without one.` : " Records without a year stay unknown.") +
+        (gained > 0 ? ` ${gained} displayed record(s) gained a journal label.` : ""),
         "success");
       renderResults();
     } else if (op === "download") {
@@ -597,6 +866,7 @@ async function onWorkerMessage(msg) {
         setStatus("Export cancelled", "No citation file was written.", "warning");
       } else {
         setStatus("Export complete", `${p.verified} of ${p.count} record(s) verified; file written to ${p.path}.`, "success");
+        rememberExportFolder(p.path);
       }
     }
     return;
@@ -608,17 +878,109 @@ async function onWorkerMessage(msg) {
 }
 
 function taskError(operation, message) {
-  // One of the two messagebox paths: alert + error status.
+  // One of the two messagebox paths: dismissable dialog + error status.
   const heading = OPERATION_HEADINGS[operation] || "Task failed";
   setStatus(heading, message, "error");
-  alert(`${heading}\n\n${message}`);
+  showError(heading, message);
+}
+
+function showError(title, detail) {
+  $("errorTitle").textContent = title;
+  $("errorDetail").textContent = detail;
+  const dlg = $("errorDialog");
+  // Escape is native dialog behavior; never stack a second modal.
+  if (!dlg.open) dlg.showModal();
 }
 
 function finishOperation() {
   // running predicate = worker liveness in Python; here: cleared on result.
+  // setIdleState() is the single source of truth for enable/disable, so every
+  // terminal path (result, task_result, task_error, invoke rejection) ends here
+  // instead of each site re-enabling controls by hand.
   running = false;
   currentOperation = null;
-  renderResults(); // re-enables controls per state
+  setProgress(0, 100); // a finished operation leaves an empty bar, not a full one
+  setIdleState();
+  saveSettingsNow();
+}
+
+// ---- export folder reveal ----
+function rememberExportFolder(path) {
+  const folder = path && path.includes("\\")
+    ? path.slice(0, path.lastIndexOf("\\"))
+    : path && path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+  lastExportFolder = folder || path || "";
+  $("btnReveal").hidden = !lastExportFolder;
+  $("menuOpenFolder").disabled = !lastExportFolder;
+}
+
+// ---- debounced renders ----
+let renderTimer = null;
+function scheduleResultsRender() {
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(renderResults, 150);
+}
+
+// ---- settings persistence ----
+const SETTINGS_FIELDS = [
+  ["query", "query"], ["pages", "pages"], ["folder", "output_folder"],
+  ["rankingPath", "ranking_path"], ["rankingYear", "ranking_year"],
+  ["yearFrom", "year_from"], ["yearTo", "year_to"],
+];
+
+function collectSettings() {
+  return {
+    query: $("query").value,
+    pages: $("pages").value,
+    output_folder: $("folder").value,
+    ranking_path: $("rankingPath").value,
+    ranking_year: $("rankingYear").value,
+    ranking_enabled: $("rankingEnabled").checked,
+    year_preset_index: $("yearPreset").selectedIndex || 0,
+    year_from: $("yearFrom").value,
+    year_to: $("yearTo").value,
+    pdf_filter: $("pdfFilter").value || "All",
+  };
+}
+
+let saveTimer = null;
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveSettingsNow, 500);
+}
+
+function saveSettingsNow() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  invoke("save_settings", { settings: collectSettings() }).catch(() => {});
+}
+
+async function loadSettings() {
+  let saved;
+  try {
+    saved = await invoke("load_settings");
+  } catch {
+    return;
+  }
+  if (!saved) return;
+  $("query").value = saved.query ?? "";
+  $("pages").value = saved.pages || "1";
+  $("folder").value = saved.output_folder ?? "";
+  $("rankingPath").value = saved.ranking_path ?? "";
+  $("rankingYear").value = saved.ranking_year ?? "";
+  $("rankingEnabled").checked = saved.ranking_enabled !== false;
+  $("yearFrom").value = saved.year_from ?? "";
+  $("yearTo").value = saved.year_to ?? "";
+  const idx = saved.year_preset_index ?? 0;
+  const preset = $("yearPreset");
+  preset.selectedIndex = idx >= 0 && idx < preset.children.length ? idx : 0;
+  const filterValue = saved.pdf_filter || "All";
+  if (PDF_FILTERS.includes(filterValue)) {
+    $("pdfFilter").value = filterValue;
+    pdfFilter = filterValue;
+  }
+  onYearPresetChanged();
+  renderResults();
 }
 
 // ---- helpers ----

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Worker events: the UI listens on the `worker` channel that every background command emits progress and terminal messages to. Nothing else is granted — no plugin APIs, no fs, no shell; commands are reached through the app's own invoke handler.",
+  "windows": ["main"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

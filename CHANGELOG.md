@@ -1,5 +1,58 @@
 # Changelog
 
+## 3.1.0
+
+Normal release of the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+published at the
+[v3.1.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v3.1.0).
+Windows installer, portable exe, and `SHA256SUMS.txt` are the release assets.
+
+### Fixed
+
+- **The window opened with every button dead.** `init()` recursed through
+  `setIdleState() → onYearPresetChanged() → renderResults() → setIdleState()`
+  until the stack overflowed, so no event listener was ever registered. Rendering
+  and control-state are now a strict one-way edge (`renderResults()` →
+  `setIdleState()`), proven by a DOM-depth assertion and by repeated live runs.
+- **Only one operation ever ran per launch.** The running latch was set by all
+  five worker commands and never cleared, so the second search failed with "An
+  operation is already running." Every terminal message (result, task result,
+  task error) now clears it before reaching the UI.
+- Seven unparenthesised `??` / `||` expressions were hard `SyntaxError`s in the
+  webview's engine; they are parenthesised.
+- A `task_error` left every control disabled; the terminal transition now always
+  restores the idle state.
+- `Ctrl+A` is select-all for the result table and no longer hijacks carets in
+  text fields; `Enter` starts a search from the query and year fields only.
+
+### Added
+
+- **Worker events are permitted.** The window label `main` and a capability
+  granting `core:event:listen`/`unlisten` were missing, so progress and result
+  messages could never reach the page.
+- **Real metadata enrichment.** `Check metadata / PDFs` now calls Crossref
+  (`enrich_articles`) through a `reqwest` transport, keeping the Python
+  two-phase progress contract (`total*2`) and its failure semantics.
+- **Real citation resolution.** `Export citations` resolves records against
+  Crossref with live per-record progress, so the status line reports an actual
+  `N of M verified` count.
+- **Imported rankings now apply.** The journal catalog is committed after an
+  import and re-labels the records already on screen, reported as
+  "N displayed record(s) gained a journal label"; searches also label new
+  results from the loaded catalog. Unidentified records stay unknown rather than
+  being guessed at.
+- Cancellation now reaches metadata enrichment, PDF checks, and downloads
+  (`AppCancelBridge`); a cancelled citation export still writes no file.
+- Settings persist between launches to
+  `%APPDATA%\com.googlescholarscraper.app\ui-settings.json` (atomic write,
+  defaults on any read failure).
+- `File → Export citations…` menu and `Ctrl+E`; sortable columns; select-all; a
+  session-only results filter; an `Open folder` button after exports; a row
+  context menu (open link, reveal PDF in Explorer, copy title, copy DOI,
+  details); the progress bar resets when an operation ends; error dialogs dismiss
+  with Escape.
+
 ## 2.2.2
 
 Normal release of the

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Google Scholar Scraper v3.0.0</title>
+  <title>Google Scholar Scraper v3.1.0</title>
   <style>
     :root {
       --app-bg: #f3f6fb; --surface: #ffffff; --surface-alt: #f8fafc;
@@ -17,6 +17,39 @@
       font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
       display: flex; flex-direction: column; height: 100vh;
     }
+    .menubar {
+      display: flex; align-items: center; gap: 2px;
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 2px 12px;
+    }
+    .menubtn {
+      background: transparent; border: none; padding: 3px 10px; border-radius: 4px;
+    }
+    .menubtn.open, .menubtn:hover:not(:disabled) { background: var(--secondary-hover); }
+    .menu {
+      position: absolute; top: 26px; left: 12px; z-index: 20;
+      background: var(--surface); border: 1px solid var(--border-strong);
+      border-radius: 6px; box-shadow: 0 6px 20px rgba(17, 24, 39, 0.16);
+      padding: 4px; min-width: 240px; display: none;
+    }
+    .menu.open { display: block; }
+    .menu button {
+      display: flex; justify-content: space-between; gap: 24px; width: 100%;
+      background: transparent; border: none; text-align: left; padding: 5px 8px;
+    }
+    .menu button:hover:not(:disabled) { background: var(--selection); }
+    .menu .acc { color: var(--muted); font-size: 11px; }
+    .ctxmenu {
+      position: absolute; z-index: 30; background: var(--surface);
+      border: 1px solid var(--border-strong); border-radius: 6px;
+      box-shadow: 0 6px 20px rgba(17, 24, 39, 0.16);
+      padding: 4px; min-width: 210px;
+    }
+    .ctxmenu button {
+      display: block; width: 100%; text-align: left; background: transparent;
+      border: none; padding: 5px 8px;
+    }
+    .ctxmenu button:hover:not(:disabled) { background: var(--selection); }
     .header {
       display: flex; align-items: center; gap: 12px;
       padding: 10px 18px 6px;
@@ -67,6 +100,10 @@
     .results-toolbar .spacer { flex: 1; }
     .results-toolbar h2 { font-size: 15px; margin: 0; }
     .summary { color: var(--muted); font-size: 12px; }
+    input.filter {
+      min-width: 0; width: 180px; padding: 3px 8px; font-size: 12px;
+      border: 1px solid var(--border-strong); border-radius: 4px;
+    }
     #appliedYear { color: var(--muted); font-size: 12px; }
     .table-wrap {
       flex: 1; overflow: auto; background: var(--surface);
@@ -77,6 +114,9 @@
       position: sticky; top: 0; background: #eef3f8; text-align: left;
       font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--border);
     }
+    thead th.sortable { cursor: pointer; user-select: none; }
+    thead th.sortable:hover { background: #e3ebf5; }
+    thead th.sorted { color: var(--primary); }
     tbody td { padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 12px; }
     tbody tr[data-iid] { cursor: default; }
     tbody tr.selected { background: var(--selection); }
@@ -101,9 +141,17 @@
   </style>
 </head>
 <body>
+  <div class="menubar">
+    <button class="menubtn" id="btnFileMenu">File</button>
+    <div class="menu" id="fileMenu">
+      <button id="menuExportCitations">Export citations… <span class="acc">Ctrl+E</span></button>
+      <button id="menuOpenFolder" disabled>Open export folder</button>
+    </div>
+  </div>
+
   <div class="header">
     <div class="titles">
-      <h1>Google Scholar Scraper v3.0.0</h1>
+      <h1>Google Scholar Scraper v3.1.0</h1>
       <div class="subtitle">Search, rank, review, and export Scholar results.</div>
     </div>
     <button id="btnCancel" disabled>Cancel</button>
@@ -155,7 +203,9 @@
     <div class="results-toolbar">
       <h2>Results</h2>
       <span class="summary" id="summary">No search has run yet.</span>
+      <input type="text" id="resultsSearch" class="filter" placeholder="Filter results…" />
       <span class="spacer"></span>
+      <button id="btnReveal" hidden>Open folder</button>
       <button id="btnCheck" disabled>Check metadata / PDFs</button>
       <button id="btnDownload" disabled>Download selected PDFs</button>
       <button id="btnDetails" disabled>Details</button>
@@ -172,7 +222,14 @@
     <div class="table-wrap" id="tableWrap">
       <table id="resultsTable">
         <thead>
-          <tr><th>Title</th><th>Authors</th><th>Rel.</th><th>Rank</th><th>PDF</th><th>Link</th></tr>
+          <tr>
+            <th class="sortable" data-key="title" title="Sort by title">Title</th>
+            <th class="sortable" data-key="authors" title="Sort by authors">Authors</th>
+            <th class="sortable" data-key="score" title="Sort by relevance score">Rel.</th>
+            <th class="sortable" data-key="rank" title="Sort by journal rank">Rank</th>
+            <th class="sortable" data-key="pdf" title="Sort by public-PDF status">PDF</th>
+            <th class="sortable" data-key="link" title="Sort by link presence">Link</th>
+          </tr>
         </thead>
         <tbody id="tableBody"></tbody>
       </table>
@@ -182,6 +239,12 @@
       <div id="emptyDetail">Run a search to review Google Scholar results here.</div>
     </div>
   </div>
+
+  <dialog id="errorDialog">
+    <h3 id="errorTitle">Error</h3>
+    <pre id="errorDetail"></pre>
+    <button id="btnErrorClose" class="primary">OK</button>
+  </dialog>
 
   <dialog id="detailDialog">
     <h3>Selected paper details</h3>
