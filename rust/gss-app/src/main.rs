@@ -46,6 +46,7 @@ fn main() {
             commands::save_settings,
             commands::save_results,
             commands::load_results,
+            commands::fetch_abstract,
             commands::reveal_path,
             commands::open_url,
         ])

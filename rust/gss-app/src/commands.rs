@@ -888,6 +888,42 @@ pub fn open_url(url: String) {
         .spawn();
 }
 
+/// `fetch_abstract`: on-demand abstract for one record.
+///
+/// Tries Crossref first (the DOI echo-check keeps a mismatched payload from
+/// being shown), then OpenAlex's inverted index. Returns `None` rather than an
+/// error when neither provider has one, so the UI can say "not available"
+/// instead of treating it as a failure. Records without a DOI fall back to an
+/// OpenAlex title search, which is best-effort.
+#[tauri::command]
+pub fn fetch_abstract(article: gss_core::models::Article) -> Option<String> {
+    let doi = article.doi.trim().to_string();
+
+    if !doi.is_empty() {
+        let mut transport = ReqwestCrossref::new();
+        let mut client = gss_core::crossref::CrossrefClient::new(&mut transport);
+        if let Some(found) = client.abstract_for_doi(&doi) {
+            return Some(found);
+        }
+    }
+
+    // OpenAlex: by DOI when we have one, else by exact-ish title search.
+    let mut transport = ReqwestCrossref::new();
+    if !doi.is_empty() {
+        if let Some(found) = gss_core::crossref::abstract_from_openalex_doi(&mut transport, &doi) {
+            return Some(found);
+        }
+    } else if !article.title.trim().is_empty() {
+        if let Some(found) =
+            gss_core::crossref::abstract_from_openalex_title(&mut transport, &article.title)
+        {
+            return Some(found);
+        }
+    }
+
+    None
+}
+
 /// `export_excel` — synchronous on the UI thread (Python contract).
 #[tauri::command]
 pub fn export_excel(

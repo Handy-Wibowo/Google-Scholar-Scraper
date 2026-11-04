@@ -78,7 +78,7 @@ let detailIndex = -1; // record shown in the details dialog
 let queryHistory = []; // recent successful queries, newest first
 let historyCursor = -1; // recall position inside queryHistory
 let hiddenColumns = new Set(); // column keys hidden by the Columns menu
-const ALL_COLUMNS = ["title", "authors", "score", "rank", "pdf", "link"];
+const ALL_COLUMNS = ["title", "authors", "index", "rank", "pdf", "link"];
 
 const $ = (id) => document.getElementById(id);
 
@@ -159,6 +159,8 @@ function init() {
     };
   }
   $("btnDetailOpenLink").onclick = () => { const a = storedArticles[detailIndex]; if (a) openRecordLink(a); };
+  $("btnDetailAbstract").onclick = () => { if (detailIndex !== -1) openAbstract(detailIndex); };
+  $("btnCloseAbstract").onclick = () => $("abstractDialog").close();
   $("btnDetailOpenPdf").onclick = () => { const a = storedArticles[detailIndex]; if (a) revealRecordPdf(a); };
   $("btnDetailCopyDoi").onclick = () => { const a = storedArticles[detailIndex]; if (a) copyText(a.doi || ""); };
   $("btnDetailCopyTitle").onclick = () => { const a = storedArticles[detailIndex]; if (a) copyText(a.title || ""); };
@@ -377,16 +379,34 @@ function onHeaderClick(key) {
   scheduleSave();
 }
 
+// Journal indexing labels. Mirrors gss_core::catalog::indexing_label; the UI
+// cannot call Rust, so the rule is duplicated here and covered by a unit test
+// on the Rust side.
+function indexingLabels(a) {
+  const labels = [];
+  const sjr = String(a.sjrQuartile ?? a.sjr_quartile ?? "").trim();
+  if (sjr) labels.push(sjr.toUpperCase() === "SJR" ? "SJR" : `SJR ${sjr}`);
+  const sinta = String(a.sintaRank ?? a.sinta_rank ?? "").trim();
+  if (sinta) labels.push(sinta.toUpperCase() === "SINTA" ? "SINTA" : `SINTA ${sinta}`);
+  const sources = [a.sjrSourceUrl ?? a.sjr_source_url, a.sintaSourceUrl ?? a.sinta_source_url, a.pdfSourceUrl ?? a.pdf_source_url]
+    .map((u) => String(u ?? "").toLowerCase());
+  if (sources.some((u) => u.includes("scopus"))) labels.push("SCOPUS");
+  if (sources.some((u) => u.includes("doaj"))) labels.push("DOAJ");
+  return labels;
+}
+
+function indexingLabel(a) {
+  return indexingLabels(a).join(", ");
+}
+
 function sortValue(a, key) {
   switch (key) {
     case "title":
       return (a.title || "").toLocaleLowerCase();
     case "authors":
       return (a.authors || "").toLocaleLowerCase();
-    case "score": {
-      const score = a.relevanceScore ?? a.relevance_score;
-      return score == null ? -1 : Number(score);
-    }
+    case "index":
+      return indexingLabel(a).toLocaleLowerCase();
     case "rank":
       return [a.sjrQuartile ?? a.sjr_quartile, a.sintaRank ?? a.sinta_rank]
         .filter(Boolean).join(" ").toLocaleLowerCase();
@@ -753,8 +773,6 @@ function renderResults() {
     if (index === focusRow) tr.classList.add("focused");
     const title = a.title ?? "";
     const authors = a.authors ?? "";
-    const score = a.relevanceScore ?? a.relevance_score;
-    const scoreText = score == null ? "" : Number(score).toFixed(1);
     const rank = [a.sjrQuartile ?? a.sjr_quartile, a.sintaRank ?? a.sinta_rank]
       .filter(Boolean).join(" / ");
     const status = a.pdfStatus ?? a.pdf_status;
@@ -764,7 +782,7 @@ function renderResults() {
     const cells = [
       ["title", title, null],
       ["authors", authors, null],
-      ["score", scoreText, null],
+      ["index", indexingLabel(a), null],
       ["rank", rank, null],
       ["pdf", status === "available" ? (localPath ? "Downloaded" : "Public PDF")
         : status === "unavailable" ? "No public PDF" : "Unknown",
@@ -902,6 +920,7 @@ function onTableContextMenu(e) {
   menu.style.top = `${e.clientY}px`;
   const items = [
     ["Open link", !link, () => openRecordLink(a)],
+    ["Abstract", false, () => openAbstract(index)],
     ["Reveal PDF in Explorer", !localPath, () => revealRecordPdf(a)],
     ["Copy title", !a.title, () => copyText(a.title || "")],
     ["Copy DOI", !doi, () => copyText(doi)],
@@ -937,6 +956,21 @@ function openDetailFor(index) {
   $("btnDetailCopyDoi").disabled = !(a.doi || "");
   $("btnDetailCopyTitle").disabled = !(a.title || "");
   $("detailDialog").showModal();
+}
+
+async function openAbstract(index) {
+  const a = storedArticles[index];
+  if (!a) return;
+  $("abstractTitle").textContent = a.title || "Abstract";
+  $("abstractText").textContent = "Fetching abstract…";
+  $("abstractDialog").showModal();
+  let text = null;
+  try { text = await invoke("fetch_abstract", { article: a }); } catch { text = null; }
+  if (text) {
+    $("abstractText").textContent = text;
+  } else {
+    $("abstractText").textContent = "No abstract is available from Crossref or OpenAlex for this record. Open the link to read the paper at its source.";
+  }
 }
 
 function openRecordLink(a) {

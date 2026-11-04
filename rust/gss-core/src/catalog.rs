@@ -640,6 +640,65 @@ pub fn apply_rank(article: &Article, rank: Option<&JournalRank>) -> Article {
     }
 }
 
+/// Abstracting/indexing services a journal can be listed in.
+///
+/// SJR (Scimago) and SINTA both arrive through imported catalog files and are
+/// mutually exclusive per file row; a journal can appear in both. DOAJ and
+/// SCOPUS are not distributed in those files, so they are reported only when
+/// the record itself proves membership (an OA journal with a DOAJ source, or a
+/// SCOPUS-branded source URL).
+///
+/// Index membership describes the JOURNAL, never the individual paper — the UI
+/// must not imply otherwise.
+pub fn indexing_labels(article: &Article) -> Vec<String> {
+    let mut labels: Vec<String> = Vec::new();
+
+    let sjr = article.sjr_quartile.trim();
+    if !sjr.is_empty() {
+        labels.push(if sjr.eq_ignore_ascii_case("SJR") {
+            "SJR".to_string()
+        } else {
+            format!("SJR {sjr}")
+        });
+    }
+
+    let sinta = article.sinta_rank.trim();
+    if !sinta.is_empty() {
+        labels.push(if sinta.eq_ignore_ascii_case("SINTA") {
+            "SINTA".to_string()
+        } else {
+            format!("SINTA {sinta}")
+        });
+    }
+
+    // SCOPUS has no free bulk dataset, so it is inferred only from an explicit
+    // source marker; a guessed "SCOPUS" label would be misinformation.
+    let hunts = [
+        article.sjr_source_url.as_str(),
+        article.sinta_source_url.as_str(),
+        article.pdf_source_url.as_str(),
+    ];
+    if hunts
+        .iter()
+        .any(|u| u.to_ascii_lowercase().contains("scopus"))
+    {
+        labels.push("SCOPUS".to_string());
+    }
+    if hunts
+        .iter()
+        .any(|u| u.to_ascii_lowercase().contains("doaj"))
+    {
+        labels.push("DOAJ".to_string());
+    }
+
+    labels
+}
+
+/// One-line index summary for the table cell; empty when nothing is known.
+pub fn indexing_label(article: &Article) -> String {
+    indexing_labels(article).join(", ")
+}
+
 /// `catalog_matches`: (SJR, SINTA) via the most specific winning identity.
 pub fn catalog_matches(
     article: &Article,
@@ -679,4 +738,65 @@ fn issn_from_doi(doi: &str) -> Option<String> {
         .captures(&doi.to_uppercase())
         .map(|m| normalize_issn(&m[1]))
         .filter(|s| !s.is_empty())
+}
+
+#[cfg(test)]
+mod indexing_tests {
+    use super::*;
+
+    fn with(sjr: &str, sinta: &str) -> Article {
+        Article {
+            sjr_quartile: sjr.to_string(),
+            sinta_rank: sinta.to_string(),
+            ..Article::default()
+        }
+    }
+
+    #[test]
+    fn labels_sjr_and_sinta_together() {
+        let a = with("Q1", "S2");
+        assert_eq!(indexing_label(&a), "SJR Q1, SINTA S2");
+        assert_eq!(indexing_labels(&a).len(), 2);
+    }
+
+    #[test]
+    fn labels_each_individually() {
+        assert_eq!(indexing_label(&with("Q3", "")), "SJR Q3");
+        assert_eq!(indexing_label(&with("", "S1")), "SINTA S1");
+    }
+
+    #[test]
+    fn unknown_journal_has_no_labels() {
+        // An unmatched journal stays empty rather than claiming an index.
+        assert_eq!(indexing_label(&with("", "")), "");
+        assert!(indexing_labels(&with("", "")).is_empty());
+    }
+
+    #[test]
+    fn source_urls_add_scopus_and_doaj() {
+        let a = Article {
+            sjr_quartile: "Q2".into(),
+            sjr_source_url: "https://www.scopus.com/sourceid/123".into(),
+            ..Article::default()
+        };
+        assert_eq!(indexing_label(&a), "SJR Q2, SCOPUS");
+
+        let b = Article {
+            sinta_rank: "S3".into(),
+            sinta_source_url: "https://doaj.org/toc/1234-5678".into(),
+            ..Article::default()
+        };
+        assert_eq!(indexing_label(&b), "SINTA S3, DOAJ");
+    }
+
+    #[test]
+    fn bare_kind_markers_do_not_duplicate() {
+        let a = with("SJR", "SINTA");
+        assert_eq!(indexing_label(&a), "SJR, SINTA");
+    }
+
+    #[test]
+    fn whitespace_only_rank_is_unknown() {
+        assert_eq!(indexing_label(&with("   ", "  ")), "");
+    }
 }

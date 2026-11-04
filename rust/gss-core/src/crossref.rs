@@ -699,6 +699,84 @@ fn citation_from_record(article: &Article, record: &CrossrefRecord) -> CitationR
     }
 }
 
+impl CrossrefClient<'_> {
+    /// Abstract for one DOI, from Crossref's JATS fragment.
+    ///
+    /// Uses the same DOI echo-check as `lookup` so a redirect or a
+    /// case-different record cannot smuggle in another work's abstract.
+    pub fn abstract_for_doi(&mut self, doi: &str) -> Option<String> {
+        let normalized = doi.trim();
+        if normalized.is_empty() {
+            return None;
+        }
+        let url = format!("{}{}", self.base_url, crate::pdf::quote_url(normalized, ""));
+        let message = self.get_message(&url)?;
+        let echoed = message
+            .get("DOI")
+            .and_then(|d| d.as_str())
+            .unwrap_or("")
+            .trim()
+            .casefold();
+        if echoed != normalized.casefold() {
+            return None;
+        }
+        crate::abstracts::abstract_from_crossref(&message)
+    }
+}
+
+/// Abstract from OpenAlex, looked up by DOI.
+pub fn abstract_from_openalex_doi(fetcher: &mut dyn CrossrefFetcher, doi: &str) -> Option<String> {
+    let url = format!(
+        "https://api.openalex.org/works/doi:{}",
+        crate::pdf::quote_url(doi, "/")
+    );
+    openalex_abstract(fetcher, &url)
+}
+
+/// Abstract from OpenAlex, looked up by title search (no DOI available).
+///
+/// Only the first confidently-titled hit is used: OpenAlex's `title.search`
+/// is fuzzy, so a mismatch would attach the wrong abstract to a record.
+pub fn abstract_from_openalex_title(
+    fetcher: &mut dyn CrossrefFetcher,
+    title: &str,
+) -> Option<String> {
+    let query = crate::pdf::quote_url(title.trim(), "");
+    let url = format!(
+        "https://api.openalex.org/works?filter=title.search:{query}&per-page=1&select=id,title,abstract_inverted_index"
+    );
+    let payload = openalex_json(fetcher, &url)?;
+    let first = payload.get("results")?.as_array()?.first()?.clone();
+    // Guard against a fuzzy match returning an unrelated work.
+    let found = first.get("title").and_then(|t| t.as_str()).unwrap_or("");
+    if crate::text::normalize_title_key(found) != crate::text::normalize_title_key(title) {
+        return None;
+    }
+    crate::abstracts::abstract_from_openalex(&first)
+}
+
+fn openalex_abstract(fetcher: &mut dyn CrossrefFetcher, url: &str) -> Option<String> {
+    let payload = openalex_json(fetcher, url)?;
+    crate::abstracts::abstract_from_openalex(&payload)
+}
+
+fn openalex_json(fetcher: &mut dyn CrossrefFetcher, url: &str) -> Option<Value> {
+    let headers = vec![
+        ("User-Agent".to_string(), DEFAULT_USER_AGENT.to_string()),
+        ("Accept".to_string(), "application/json".to_string()),
+    ];
+    let (body, status) = fetcher.get(url, &headers).ok()?;
+    if status != 200 || body.len() > DEFAULT_MAX_RESPONSE_BYTES {
+        return None;
+    }
+    let payload: Value = serde_json::from_slice(&body).ok()?;
+    if payload.is_object() {
+        Some(payload)
+    } else {
+        None
+    }
+}
+
 /// `_unresolved_citation`: exportable but explicitly unverified.
 fn unresolved_citation(article: &Article) -> CitationRecord {
     CitationRecord {
