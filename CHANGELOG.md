@@ -1,5 +1,34 @@
 # Changelog
 
+## 3.3.0
+
+Normal release of the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+published at the
+[v3.3.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v3.3.0).
+
+### Added
+
+- **Read the abstract without leaving the app.** A new `Abstract` action in the
+  row context menu and in the details dialog fetches the paper's abstract and
+  shows it in an in-app dialog. Crossref's JATS abstract is flattened to text
+  first; OpenAlex's inverted-index abstract is reconstructed if Crossref has
+  none. Records without a DOI fall back to an OpenAlex title search that only
+  accepts an exact normalized-title match, so a fuzzy hit can never attach the
+  wrong abstract. A record with no abstract anywhere says so explicitly instead
+  of failing silently.
+- **A journal indexing column replaces the relevance score.** The table now
+  shows which abstracting service covers the journal — `SJR Q1`, `SINTA S2`,
+  `SCOPUS`, `DOAJ`, or blank — derived from the imported ranking catalog plus
+  source markers on the record. Local relevance still determines the default
+  ordering but is no longer displayed as a column. A blank cell means the journal
+  is unknown, never that it is unranked; index membership describes the journal,
+  not the individual paper.
+- `docs/CAPABILITY-BACKLOG.md` records a six-agent review of the app: 192 raw
+  proposals consolidated into 109 verified capability candidates with effort,
+  data availability, and export-parity risk, plus a dependency-ordered next
+  slice.
+
 ## 3.2.0
 
 Normal release of the

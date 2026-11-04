@@ -1,4 +1,4 @@
-# Google Scholar Scraper — Rust (v3.2.0)
+# Google Scholar Scraper — Rust (v3.3.0)
 
 Native Rust rewrite of the Python desktop app (`../src`, frozen at v2.2.2 as the
 behavioral oracle). Same core logic — Scholar scraping, PDF
@@ -49,13 +49,27 @@ operation ends; error dialogs that dismiss with Escape; and settings
 Cancelling, metadata enrichment, citation resolution, and rank application are
 all live against the network — nothing is a stub.
 
-### v3.2.0 UI additions
+### v3.3.0 additions
 
-Keyboard grid navigation, selection counts, export scope (visible/selected),
-retry after failure, collapsible Filters panel, results restored across launches
-(`last-results.json`), clickable PDF/link cells, query history, column visibility,
-compact density, and details-dialog actions. Settings for sort order, density,
-hidden columns, and query history persist in `ui-settings.json`.
+**Abstracts on demand** (`gss-core/src/abstracts.rs`): Crossref JATS is flattened
+to text and OpenAlex's `abstract_inverted_index` is reconstructed, exposed through
+`fetch_abstract` and shown in an in-app dialog from the row context menu or the
+details dialog. Records without a DOI fall back to an OpenAlex title search that
+only accepts a normalized-title match.
+
+**Journal indexing column**: `catalog::indexing_labels` derives `SJR Q1`,
+`SINTA S2`, `SCOPUS`, or `DOAJ` badges from the imported catalog and source
+markers; the local relevance score remains the default sort but is no longer a
+column. Empty means unknown, never unranked.
+
+See `docs/CAPABILITY-BACKLOG.md` for the reviewed backlog of further work.
+
+Carried from 3.2.0: keyboard grid navigation, selection counts, export scope
+(visible/selected), retry after failure, collapsible Filters panel, results
+restored across launches (`last-results.json`), clickable PDF/link cells, query
+history, column visibility, compact density, and details-dialog actions. Settings
+for sort order, density, hidden columns, and query history persist in
+`ui-settings.json`.
 
 ## Parity vs the Python oracle
 

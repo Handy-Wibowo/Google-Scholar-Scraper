@@ -3,7 +3,7 @@ resolver = "2"
 members = ["gss-core", "gss-app", "gss-parity"]
 
 [workspace.package]
-version = "3.2.0"
+version = "3.3.0"
 edition = "2021"
 license = "SEE LICENSE IN ../src/LICENSE"
 
