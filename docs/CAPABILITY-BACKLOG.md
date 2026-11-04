@@ -2,9 +2,16 @@
 
 Generated from a six-agent parallel review of the Rust app (`rust/`), each with a
 distinct focus: research workflow, data sources, UX craft, robustness, platform
-integration, and export/data interchange. Every item was verified against the code
-by the agent that proposed it; "exists" / "fetch" notes say whether the data is
-already in the repo or must be requested.
+integration, and export/data interchange.
+
+Provenance: the agents produced **192 raw proposals** (37 research workflow, 30 data
+sources, 35 UX, 29 robustness, 33 platform, 28 export). After merging duplicates
+across agents and dropping items already shipped in 3.2.0, **109 distinct
+capabilities** remain below.
+
+Every item was verified against the code by the agent that proposed it;
+"exists" / "fetch" notes say whether the data is already in the repo or must be
+requested.
 
 **Baseline (already shipped, do not re-propose):** Scholar search, Crossref
 metadata enrichment, public-PDF discovery/check/download, SJR+SINTA catalog import
