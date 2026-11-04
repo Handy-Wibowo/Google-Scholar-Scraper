@@ -74,6 +74,55 @@ pub struct Article {
     pub pdf_status: String,
     pub pdf_detail: String,
     pub pdf_local_path: String,
+
+    // ---- v3.4.0 metadata, all from payloads already fetched ----
+    // Every field is `#[serde(default)]` so a results sidecar written by 3.3.x
+    // still loads: `load_results` deserializes the whole array, and one missing
+    // key would otherwise discard the entire restored session.
+    /// Crossref `is-referenced-by-count`, or OpenAlex `cited_by_count`.
+    #[serde(default)]
+    pub cited_by: Option<i64>,
+    /// Crossref volume / issue / page — the citation-grade venue line.
+    #[serde(default)]
+    pub volume: String,
+    #[serde(default)]
+    pub issue: String,
+    #[serde(default)]
+    pub pages: String,
+    #[serde(default)]
+    pub publisher: String,
+    /// Crossref `license[].URL` for the version of record.
+    #[serde(default)]
+    pub license: String,
+    /// OpenAlex `open_access.oa_status`: gold/green/bronze/hybrid/closed.
+    #[serde(default)]
+    pub oa_status: String,
+    /// OpenAlex `ids.pmid` / `ids.pmcid` (bare numeric ids, no URL).
+    #[serde(default)]
+    pub pmid: String,
+    #[serde(default)]
+    pub pmcid: String,
+    /// Crossref `author[].ORCID`, de-duplicated, without the URL prefix.
+    #[serde(default)]
+    pub orcids: Vec<String>,
+    /// Structured author names from Crossref, when the record was resolved.
+    #[serde(default)]
+    pub authors_structured: Vec<String>,
+    /// `"retraction"`, `"correction"`, `"expression-of-concern"`, or empty.
+    #[serde(default)]
+    pub retraction: String,
+    /// DOI of the notice that flags this record, when known.
+    #[serde(default)]
+    pub retraction_doi: String,
+    /// Crossref funder names with award numbers, e.g. `"NWO (840.11.001)"`.
+    #[serde(default)]
+    pub funders: Vec<String>,
+    /// How the SJR label was matched: `"issn:1234-5678"` or `"title"`.
+    #[serde(default)]
+    pub sjr_matched_by: String,
+    /// How the SINTA label was matched.
+    #[serde(default)]
+    pub sinta_matched_by: String,
 }
 
 impl Default for Article {
@@ -99,6 +148,22 @@ impl Default for Article {
             pdf_status: PDF_STATUS_UNKNOWN.to_string(),
             pdf_detail: String::new(),
             pdf_local_path: String::new(),
+            cited_by: None,
+            volume: String::new(),
+            issue: String::new(),
+            pages: String::new(),
+            publisher: String::new(),
+            license: String::new(),
+            oa_status: String::new(),
+            pmid: String::new(),
+            pmcid: String::new(),
+            orcids: Vec::new(),
+            authors_structured: Vec::new(),
+            retraction: String::new(),
+            retraction_doi: String::new(),
+            funders: Vec::new(),
+            sjr_matched_by: String::new(),
+            sinta_matched_by: String::new(),
         }
     }
 }

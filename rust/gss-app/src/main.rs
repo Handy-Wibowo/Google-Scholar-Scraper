@@ -57,6 +57,7 @@ fn main() {
             commands::pick_path,
             commands::load_settings,
             commands::load_catalog_records,
+            commands::journal_rank_history,
             commands::save_settings,
             commands::save_results,
             commands::load_results,

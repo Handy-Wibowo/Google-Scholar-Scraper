@@ -78,7 +78,7 @@ let detailIndex = -1; // record shown in the details dialog
 let queryHistory = []; // recent successful queries, newest first
 let historyCursor = -1; // recall position inside queryHistory
 let hiddenColumns = new Set(); // column keys hidden by the Columns menu
-const ALL_COLUMNS = ["title", "authors", "index", "rank", "pdf", "link"];
+const ALL_COLUMNS = ["title", "authors", "index", "rank", "pdf", "link", "cited", "oa"];
 
 const $ = (id) => document.getElementById(id);
 
@@ -133,7 +133,9 @@ function init() {
 
   $("btnSearch").onclick = startSearch;
   $("btnCancel").onclick = cancelOperation;
-  $("btnCheck").onclick = checkMetadataPdfs;
+  // Explicit wrapper: passing the handler directly would put the click event
+  // into the metadataOnly parameter.
+  $("btnCheck").onclick = () => checkMetadataPdfs(false);
   $("btnImport").onclick = importRanking;
   $("btnDownload").onclick = downloadSelected;
   $("btnDetails").onclick = openDetail;
@@ -154,6 +156,8 @@ function init() {
     if (focusRow === -1) { const ids = visibleIndices(); if (ids.length) { focusRow = ids[0]; renderResults(); focusGridRow(); } }
   });
   $("btnRetry").onclick = retryLastSearch;
+  $("btnMetadataOnly").onclick = () => checkMetadataPdfs(true);
+  $("btnGapReport").onclick = showGapReport;
   $("btnToggleConfig").onclick = () => toggleConfig();
   $("exportScope").onchange = () => renderResults();
   $("compactRows").onchange = () => { applyDensity(); scheduleSave(); };
@@ -428,6 +432,12 @@ function sortValue(a, key) {
     }
     case "link":
       return (a.link || "").toLocaleLowerCase();
+    case "cited": {
+      const cited = a.citedBy ?? a.cited_by;
+      return cited == null ? -1 : Number(cited);
+    }
+    case "oa":
+      return (a.oaStatus ?? a.oa_status ?? "").toLocaleLowerCase();
     default:
       return "";
   }
@@ -507,6 +517,7 @@ function setIdleState() {
   $("btnSearch").disabled = false;
   $("btnCancel").disabled = true;
   $("btnCheck").disabled = !hasArticles;
+  $("btnMetadataOnly").disabled = !hasArticles;
   $("btnDownload").disabled = !hasArticles;
   $("btnDetails").disabled = !hasArticles;
   $("btnImport").disabled = false;
@@ -596,12 +607,15 @@ function cancelOperation() {
 }
 
 // ---- check / download / import ----
-async function checkMetadataPdfs() {
+async function checkMetadataPdfs(metadataOnly = false) {
   if (running || storedArticles.length === 0) return;
-  setStatus(OPERATION_HEADINGS.check, "Looking up verified bibliographic metadata, then validating public PDF links. Records stay usable if a provider fails.", "running");
+  const detail = metadataOnly
+    ? "Refreshing bibliographic metadata only; public-PDF links are left as they are."
+    : "Looking up verified bibliographic metadata, then validating public PDF links. Records stay usable if a provider fails.";
+  setStatus(OPERATION_HEADINGS.check, detail, "running");
   setRunning("check");
   try {
-    await invoke("check_metadata_pdfs");
+    await invoke("check_metadata_pdfs", { metadataOnly });
   } catch (err) {
     finishOperation();
     if (errCode(err) === "NOTHING_TO_CHECK") {
@@ -801,12 +815,26 @@ function renderResults() {
           : pdfUrl ? { action: "open-pdf", value: pdfUrl, label: "Public PDF" } : null],
       ["link", link ? "Open link" : "No link",
         link ? { action: "open-link", value: link, label: "Open link" } : null],
+      ["cited", (a.citedBy ?? a.cited_by) == null ? "" : String(a.citedBy ?? a.cited_by), null],
+      ["oa", (a.oaStatus ?? a.oa_status ?? "").trim(), null],
     ];
     for (const [key, text, action] of cells) {
       if (hiddenColumns.has(key)) continue;
       const td = document.createElement("td");
       td.dataset.col = key;
       td.title = text; // full value survives truncation
+      // A retracted or corrected record must be visible without opening it.
+      const notice = (a.retraction ?? "").trim();
+      if (notice && key === "title") {
+        const badge = document.createElement("span");
+        badge.className = "badge retracted";
+        badge.textContent = notice === "retraction" ? "RETRACTED" : notice.toUpperCase();
+        badge.title = (a.retractionDoi ?? a.retraction_doi)
+          ? `Notice DOI: ${a.retractionDoi ?? a.retraction_doi}`
+          : "This record carries a correction notice";
+        td.appendChild(badge);
+        td.appendChild(document.createTextNode(" "));
+      }
       if (action) {
         const btn = document.createElement("button");
         btn.className = "linkbtn";
@@ -838,6 +866,7 @@ function renderResults() {
   }
   updateSortIndicators();
   applyDensity();
+  updateYearHistogram();
   refreshSummary();
   // One-way edge: render → idle. setIdleState() never renders.
   setIdleState();
@@ -852,6 +881,25 @@ function updateSortIndicators() {
     th.setAttribute("aria-sort", active ? (sortDir === 1 ? "ascending" : "descending") : "none");
   }
   syncColumnCheckboxes();
+}
+
+// Publication-year distribution: "1998-2024, 60% since 2020".
+function updateYearHistogram() {
+  const years = storedArticles
+    .map((a) => a.publicationYear ?? a.publication_year)
+    .filter((y) => Number.isInteger(y));
+  const el = $("yearHistogram");
+  if (!el) return;
+  if (years.length === 0) {
+    el.textContent = "";
+    return;
+  }
+  const min = Math.min(...years);
+  const max = Math.max(...years);
+  const recentCutoff = max - 5;
+  const recent = years.filter((y) => y >= recentCutoff).length;
+  const pct = Math.round((recent / years.length) * 100);
+  el.textContent = `${min}\u2013${max}, ${pct}% since ${recentCutoff}`;
 }
 
 function refreshSummary() {
@@ -957,6 +1005,29 @@ function copyText(text) {
   }
 }
 
+async function appendRankTrend(index) {
+  const a = storedArticles[index];
+  if (!a) return;
+  const issns = a.issns ?? [];
+  const journal = a.journal ?? "";
+  if (!journal && issns.length === 0) return;
+  let history = [];
+  try {
+    history = await invoke("journal_rank_history", { issns, journal });
+  } catch {
+    return;
+  }
+  if (!Array.isArray(history) || history.length < 2) return;
+  // Only render if the same record is still open.
+  if (detailIndex !== index || !$("detailDialog").open) return;
+  const trend = history.map(([year, kind, rank]) => `${kind.toUpperCase()} ${rank}${year ? ` (${year})` : ""}`).join(" \u2192 ");
+  const text = $("detailText").textContent;
+  const marker = "\n\nPublic PDF:";
+  $("detailText").textContent = text.includes(marker)
+    ? text.replace(marker, `\nJournal trend: ${trend}${marker}`)
+    : `${text}\nJournal trend: ${trend}`;
+}
+
 function openDetailFor(index) {
   const a = storedArticles[index];
   if (!a) return;
@@ -967,6 +1038,7 @@ function openDetailFor(index) {
   $("btnDetailCopyDoi").disabled = !(a.doi || "");
   $("btnDetailCopyTitle").disabled = !(a.title || "");
   $("detailDialog").showModal();
+  appendRankTrend(index);
 }
 
 async function openAbstract(index) {
@@ -1015,13 +1087,34 @@ function articleDetailText(a) {
   lines.push(`Journal: ${a.journal || none}`);
   lines.push(`ISSN: ${(a.issns ?? []).length ? a.issns.join(", ") : none}`);
   lines.push(`Publication year: ${a.publicationYear ?? a.publication_year ?? none}`);
+  // v3.4.0 metadata (details dialog only; the table stays narrow).
+  const venue = [(a.volume ?? ""), (a.issue ?? "")].filter(Boolean).join("(") +
+    ((a.volume ?? "") && (a.issue ?? "") ? ")" : "");
+  if (venue) lines.push(`Volume/issue: ${venue}`);
+  if (a.pages) lines.push(`Pages: ${a.pages}`);
+  if (a.publisher) lines.push(`Publisher: ${a.publisher}`);
+  if (a.citedBy ?? a.cited_by ?? null) lines.push(`Cited by: ${a.citedBy ?? a.cited_by}`);
+  if (a.oaStatus ?? a.oa_status) lines.push(`Open access: ${a.oaStatus ?? a.oa_status}`);
+  if (a.license) lines.push(`License: ${a.license}`);
+  if (a.pmid) lines.push(`PMID: ${a.pmid}`);
+  if (a.pmcid) lines.push(`PMCID: ${a.pmcid}`);
+  if ((a.orcids ?? []).length) lines.push(`ORCID: ${a.orcids.join(", ")}`);
+  if ((a.funders ?? []).length) lines.push(`Funding: ${a.funders.join("; ")}`);
+  if (a.retraction) {
+    const notice = a.retractionDoi ?? a.retraction_doi;
+    lines.push(`Notice: ${a.retraction}${notice ? ` (${notice})` : ""}`);
+  }
   lines.push("");
   const sjrYear = a.sjrYear ?? a.sjr_year;
-  lines.push(`SJR quartile: ${(a.sjrQuartile ?? a.sjr_quartile) || none}   (ranking year: ${sjrYear ?? none})`);
+  const sjrBasis = (a.sjrMatchedBy ?? a.sjr_matched_by ?? "").trim();
+  const sjrNote = sjrBasis ? `  [matched by ${sjrBasis}]` : "";
+  lines.push(`SJR quartile: ${(a.sjrQuartile ?? a.sjr_quartile) || none}   (ranking year: ${sjrYear ?? none})${sjrNote}`);
   lines.push(`SJR category: ${(a.sjrCategory ?? a.sjr_category) || none}`);
   lines.push(`SJR source: ${(a.sjrSourceUrl ?? a.sjr_source_url) || "no imported record"}`);
   const sintaYear = a.sintaYear ?? a.sinta_year;
-  lines.push(`SINTA rank: ${(a.sintaRank ?? a.sinta_rank) || none}   (ranking year: ${sintaYear ?? none})`);
+  const sintaBasis = (a.sintaMatchedBy ?? a.sinta_matched_by ?? "").trim();
+  const sintaNote = sintaBasis ? `  [matched by ${sintaBasis}]` : "";
+  lines.push(`SINTA rank: ${(a.sintaRank ?? a.sinta_rank) || none}   (ranking year: ${sintaYear ?? none})${sintaNote}`);
   lines.push(`SINTA source: ${(a.sintaSourceUrl ?? a.sinta_source_url) || "no imported record"}`);
   lines.push("");
   // Python prints the raw stored status; no relabelling.
@@ -1109,6 +1202,10 @@ async function onWorkerMessage(msg) {
         setStatus("Check cancelled", `Collected records were kept. ${detail}` + (note ? ` ${note}` : ""), "warning");
       } else if (note) {
         setStatus("Check finished with errors", `${note} ${detail}`, "warning");
+      } else if (p.metadata_only) {
+        setStatus("Check complete",
+          `Refreshed bibliographic metadata for ${storedArticles.length} records. Public-PDF status was left unchanged.`,
+          "success");
       } else {
         setStatus("Check complete",
           `Updated metadata and public-PDF status for ${storedArticles.length} records. ${detail} Records that stay unknown were not verified by the checked sources.`,
@@ -1226,6 +1323,34 @@ function finishOperation() {
   setProgress(0, 100); // a finished operation leaves an empty bar, not a full one
   setIdleState();
   saveSettingsNow();
+}
+
+// Unranked journals (2.15): turns "unknown" into a worklist the user can source
+// rows for and re-import.
+function showGapReport() {
+  if (storedArticles.length === 0) {
+    setStatus("No results yet", "Run a search before looking for unranked journals.", "warning");
+    return;
+  }
+  const gaps = new Map();
+  for (const a of storedArticles) {
+    const labelled = (a.sjrQuartile ?? a.sjr_quartile ?? "") || (a.sintaRank ?? a.sinta_rank ?? "");
+    if (labelled) continue;
+    const journal = (a.journal || "").trim() || "(no journal recorded)";
+    const key = journal.toLocaleLowerCase();
+    const entry = gaps.get(key) || { journal, issns: new Set(), count: 0 };
+    entry.count += 1;
+    for (const issn of (a.issns ?? [])) entry.issns.add(issn);
+    gaps.set(key, entry);
+  }
+  const lines = [...gaps.values()]
+    .sort((x, y) => y.count - x.count)
+    .map((g) => `${g.count}\u00d7  ${g.journal}${g.issns.size ? `  (ISSN ${[...g.issns].join(", ")})` : ""}`);
+  $("errorTitle").textContent = "Journals with no imported ranking match";
+  $("errorDetail").textContent = gaps.size === 0
+    ? "Every stored record already carries a rank label."
+    : `${gaps.size} distinct journal(s) across ${storedArticles.length} records have no SJR/SINTA match:\n\n${lines.join("\n")}`;
+  if (!$("errorDialog").open) $("errorDialog").showModal();
 }
 
 // ---- retry ----

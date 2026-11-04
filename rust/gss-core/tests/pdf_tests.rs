@@ -1296,6 +1296,7 @@ fn check_preserves_unrelated_fields() {
         pdf_status: "unknown".into(),
         pdf_detail: "".into(),
         pdf_local_path: "".into(),
+        ..Default::default()
     };
 
     let result = check(&article, &mut session);

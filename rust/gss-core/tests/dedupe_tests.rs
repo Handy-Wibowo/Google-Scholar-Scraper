@@ -244,6 +244,7 @@ fn merge_preserves_every_new_field_from_a_single_record() {
         pdf_detail: "verified".into(),
         pdf_local_path: "C:/pdfs/a.pdf".into(),
         relevance_score: None,
+        ..Default::default()
     };
     let second = Article {
         title: " deep   learning ".into(),

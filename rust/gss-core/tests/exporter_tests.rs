@@ -159,6 +159,7 @@ fn new_metadata_columns_are_exported() {
         pdf_status: "available".into(),
         pdf_detail: "verified".into(),
         pdf_local_path: "C:/pdfs/a.pdf".into(),
+        ..Default::default()
     };
     let dir = tmp_dir();
     let path = dir.path().join("articles.csv");

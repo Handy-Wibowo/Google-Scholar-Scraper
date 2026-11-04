@@ -659,6 +659,7 @@ pub fn apply_rank(article: &Article, rank: Option<&JournalRank>) -> Article {
             sjr_year: rank.year,
             sjr_category: rank.category.clone(),
             sjr_source_url: rank.source_url.clone(),
+            sjr_matched_by: rank.matched_by.clone(),
             ..article.clone()
         }
     } else {
@@ -666,9 +667,41 @@ pub fn apply_rank(article: &Article, rank: Option<&JournalRank>) -> Article {
             sinta_rank: rank.rank.clone(),
             sinta_year: rank.year,
             sinta_source_url: rank.source_url.clone(),
+            sinta_matched_by: rank.matched_by.clone(),
             ..article.clone()
         }
     }
+}
+
+/// Every ranking record for one journal identity, oldest year first.
+///
+/// `JournalCatalog` retains all imported years (matching only picks a winner),
+/// so a "Q1 2019 → Q2 2023" trend is a read, not new data. Returns an empty vec
+/// when the journal is unknown.
+pub fn rank_history(
+    catalog: &JournalCatalog,
+    issns: &[String],
+    journal: &str,
+) -> Vec<(i32, String, String)> {
+    // (year, kind, rank)
+    let mut out: Vec<(i32, String, String)> = Vec::new();
+    let normalized = normalize_issn_list(issns.iter().map(|s| s.as_str()));
+    let title_key = journal_title_key(journal);
+    for record in catalog.records() {
+        let issn_hit =
+            !normalized.is_empty() && record.issns.iter().any(|i| normalized.contains(i));
+        let title_hit = !title_key.is_empty() && record.title_key == title_key;
+        if !issn_hit && !title_hit {
+            continue;
+        }
+        let year = record.year.unwrap_or(0);
+        let entry = (year, record.kind.clone(), record.rank.clone());
+        if !out.contains(&entry) {
+            out.push(entry);
+        }
+    }
+    out.sort_by_key(|(year, kind, _)| (*year, kind.clone()));
+    out
 }
 
 /// Abstracting/indexing services a journal can be listed in.

@@ -90,6 +90,8 @@ pub struct Outcome {
     /// True when the reason for a non-available status is a local/operational
     /// failure rather than a statement about public availability.
     pub local_failure: bool,
+    /// Facts read from the OpenAlex payload during discovery (v3.4.0).
+    pub oa: Option<OaMetadata>,
 }
 
 impl Outcome {
@@ -100,6 +102,7 @@ impl Outcome {
             source_url: String::new(),
             local_path: String::new(),
             local_failure: false,
+            oa: None,
         }
     }
 
@@ -226,12 +229,16 @@ pub fn check_pdf_availability(
         &mut std::collections::HashSet::new(),
     );
     if outcome.local_failure {
-        return Article {
+        let base = Article {
             pdf_detail: outcome.detail,
             ..article.clone()
         };
+        return match &outcome.oa {
+            Some(meta) => apply_oa_metadata(&base, meta),
+            None => base,
+        };
     }
-    Article {
+    let base = Article {
         pdf_status: outcome.status,
         pdf_detail: outcome.detail,
         pdf_source_url: if outcome.source_url.is_empty() {
@@ -240,6 +247,12 @@ pub fn check_pdf_availability(
             outcome.source_url
         },
         ..article.clone()
+    };
+    // The discovery payload also carried citation count, OA status and PubMed
+    // ids; keep them rather than downloading the same data again later.
+    match &outcome.oa {
+        Some(meta) => apply_oa_metadata(&base, meta),
+        None => base,
     }
 }
 
@@ -372,10 +385,15 @@ fn evaluate(
     }
 
     let discovery_kind;
+    let mut out_meta: Option<OaMetadata> = None;
     let discovered = if !doi.is_empty() {
         discovery_kind = "DOI";
         match discover_oa_candidates(&doi, fetcher, resolver, cancel) {
-            Ok(list) => Some(list),
+            Ok((list, meta)) => {
+                // v3.4.0: the payload is already in hand; keep what it tells us.
+                out_meta = Some(meta);
+                Some(list)
+            }
             Err(PdfError::Cancelled) => {
                 return Outcome::new(
                     PDF_UNKNOWN,
@@ -387,7 +405,10 @@ fn evaluate(
     } else {
         discovery_kind = "title";
         match discover_oa_candidates_by_title(&article.title, fetcher, resolver, cancel) {
-            Ok(list) => Some(list),
+            Ok((list, meta)) => {
+                out_meta = Some(meta);
+                Some(list)
+            }
             Err(PdfError::Cancelled) => {
                 return Outcome::new(
                     PDF_UNKNOWN,
@@ -412,7 +433,7 @@ fn evaluate(
         return outcome;
     };
     if discovered.is_empty() {
-        return outcome;
+        return attach_oa(outcome, out_meta);
     }
 
     let second = try_candidates(
@@ -426,11 +447,20 @@ fn evaluate(
         &article.title,
     );
     // A confirmed PDF wins; otherwise the more informative attempt.
-    if status_rank(&second.status) > status_rank(&outcome.status) {
+    let chosen = if status_rank(&second.status) > status_rank(&outcome.status) {
         second
     } else {
         outcome
+    };
+    attach_oa(chosen, out_meta)
+}
+
+/// Attach discovered OpenAlex metadata to an outcome (`v3.4.0`).
+fn attach_oa(mut outcome: Outcome, meta: Option<OaMetadata>) -> Outcome {
+    if let Some(meta) = meta {
+        outcome.oa = Some(meta);
     }
+    outcome
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -504,6 +534,7 @@ fn try_candidates(
                             source_url: resolved.clone(),
                             local_path: String::new(),
                             local_failure: false,
+                            oa: None,
                         }
                     }
                     Some(folder) => {
@@ -542,6 +573,7 @@ fn try_candidates(
                                 source_url: resolved.clone(),
                                 local_path: final_path.to_string_lossy().into_owned(),
                                 local_failure: false,
+                                oa: None,
                             },
                         }
                     }
@@ -954,10 +986,10 @@ fn discover_oa_candidates(
     fetcher: &mut dyn PdfFetcher,
     resolver: &dyn DnsResolver,
     cancel: Option<&dyn CancelEvent>,
-) -> Result<Vec<String>, PdfError> {
+) -> Result<(Vec<String>, OaMetadata), PdfError> {
     let api_url = OPENALEX_WORK_URL.replace("{}", &quote_url(doi, "/"));
     match open_metadata(&api_url, fetcher, resolver, cancel) {
-        Ok(payload) => Ok(oa_pdf_urls(&payload)),
+        Ok(payload) => Ok((oa_pdf_urls(&payload), oa_metadata(&payload))),
         Err(e) => Err(e),
     }
 }
@@ -968,10 +1000,10 @@ fn discover_oa_candidates_by_title(
     fetcher: &mut dyn PdfFetcher,
     resolver: &dyn DnsResolver,
     cancel: Option<&dyn CancelEvent>,
-) -> Result<Vec<String>, PdfError> {
+) -> Result<(Vec<String>, OaMetadata), PdfError> {
     let wanted = crate::text::normalize_title_key(title);
     if wanted.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), OaMetadata::default()));
     }
     let api_url = OPENALEX_TITLE_SEARCH_URL.replace("{}", &quote_url(title.trim(), ""));
 
@@ -1004,18 +1036,97 @@ fn discover_oa_candidates_by_title(
         if !matches.iter().any(|(k, _)| *k == distinct_key) {
             matches.push((distinct_key, work));
             if matches.len() > 1 {
-                return Ok(Vec::new());
+                // Ambiguous title match: never attach metadata or a PDF.
+                return Ok((Vec::new(), OaMetadata::default()));
             }
         }
     }
 
     if matches.len() != 1 {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), OaMetadata::default()));
     }
-    Ok(oa_pdf_urls(matches[0].1))
+    let work = matches[0].1;
+    Ok((oa_pdf_urls(work), oa_metadata(work)))
 }
 
 /// `_oa_pdf_urls`: ≤3 distinct PDF URLs from OA-flagged locations.
+/// Bibliographic facts that ride along in the OpenAlex work payload the PDF
+/// check already downloads: citation count, OA status, retraction flag, and the
+/// PubMed identifiers. Extracting them here costs no extra request.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct OaMetadata {
+    pub cited_by: Option<i64>,
+    pub oa_status: String,
+    pub is_retracted: bool,
+    pub pmid: String,
+    pub pmcid: String,
+}
+
+/// Read `OaMetadata` out of an OpenAlex work object.
+pub fn oa_metadata(work: &serde_json::Value) -> OaMetadata {
+    let cited_by = work.get("cited_by_count").and_then(|v| v.as_i64());
+    let oa_status = work
+        .get("open_access")
+        .and_then(|o| o.get("oa_status"))
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    let is_retracted = work
+        .get("is_retracted")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    // `ids` values are full URLs; the bare identifier is what users copy.
+    let ids = work.get("ids");
+    let pmid = ids
+        .and_then(|i| i.get("pmid"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .rsplit('/')
+        .next()
+        .unwrap_or("")
+        .to_string();
+    let pmcid = ids
+        .and_then(|i| i.get("pmcid"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .rsplit('/')
+        .next()
+        .unwrap_or("")
+        .to_string();
+    OaMetadata {
+        cited_by,
+        oa_status,
+        is_retracted,
+        pmid,
+        pmcid,
+    }
+}
+
+/// Apply `OaMetadata` onto an article, fill-only.
+pub fn apply_oa_metadata(article: &Article, meta: &OaMetadata) -> Article {
+    let mut out = article.clone();
+    if out.cited_by.is_none() {
+        out.cited_by = meta.cited_by;
+    }
+    if out.oa_status.is_empty() {
+        out.oa_status = meta.oa_status.clone();
+    }
+    if out.pmid.is_empty() {
+        out.pmid = meta.pmid.clone();
+    }
+    if out.pmcid.is_empty() {
+        out.pmcid = meta.pmcid.clone();
+    }
+    if meta.is_retracted && out.retraction.is_empty() {
+        // OpenAlex is authoritative here; the notice DOI is not exposed.
+        out.retraction = "retraction".to_string();
+    }
+    out
+}
+
 fn oa_pdf_urls(work: &serde_json::Value) -> Vec<String> {
     let mut urls: Vec<String> = Vec::new();
     let mut locations: Vec<&serde_json::Value> = Vec::new();

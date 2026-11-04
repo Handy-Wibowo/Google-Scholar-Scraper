@@ -363,7 +363,11 @@ pub fn cancel_operation(state: State<'_, AppState>) {
 
 /// `check_metadata_pdfs` — metadata enrichment + PDF availability per record.
 #[tauri::command]
-pub fn check_metadata_pdfs(app: AppHandle, state: State<'_, AppState>) -> Result<(), CommandError> {
+pub fn check_metadata_pdfs(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    metadata_only: Option<bool>,
+) -> Result<(), CommandError> {
     if state.is_running() {
         return Err(CommandError::already_running());
     }
@@ -432,6 +436,31 @@ pub fn check_metadata_pdfs(app: AppHandle, state: State<'_, AppState>) -> Result
             out
         };
 
+        // Metadata-only refresh (2.10): refreshing DOI/journal/rank on a few
+        // hundred records should not re-validate every PDF link.
+        let metadata_only = metadata_only.unwrap_or(false);
+        if metadata_only {
+            if let Some(s) = app_handle.try_state::<AppState>() {
+                s.set_articles(enriched.clone());
+            }
+            let payload = serde_json::json!({
+                "articles": enriched,
+                "enrich_error": enrich_error,
+                "cancelled": bridge.is_set(),
+                "total": total,
+                "metadata_only": true,
+            });
+            clear_running(&app_handle);
+            emit(
+                &app_handle,
+                &WorkerMessage::TaskResult {
+                    operation: "check".into(),
+                    payload,
+                },
+            );
+            return;
+        }
+
         let mut results: Vec<gss_core::models::Article> = Vec::new();
         let resolver = gss_core::pdf::PublicResolver("93.184.216.34".to_string());
         let mut fetcher = ReqwestPdfFetcher::new();
@@ -464,6 +493,7 @@ pub fn check_metadata_pdfs(app: AppHandle, state: State<'_, AppState>) -> Result
             "enrich_error": enrich_error,
             "cancelled": cancelled,
             "total": total,
+            "metadata_only": false,
         });
         clear_running(&app_handle);
         emit(
@@ -994,6 +1024,20 @@ pub fn load_settings() -> crate::settings::LoadOutcome {
     crate::settings::load_with_notice()
 }
 
+/// Ranking trend for one journal: `[(year, kind, rank)]`, oldest first.
+///
+/// Reads the in-memory catalog only; the import keeps every year, so no network
+/// and no new storage are involved.
+#[tauri::command]
+pub fn journal_rank_history(
+    state: State<'_, AppState>,
+    issns: Vec<String>,
+    journal: String,
+) -> Vec<(i32, String, String)> {
+    let catalog = state.catalog.lock().map(|c| c.clone()).unwrap_or_default();
+    gss_core::catalog::rank_history(&catalog, &issns, &journal)
+}
+
 /// Records from the last successful ranking import, restored at startup.
 #[tauri::command]
 pub fn load_catalog_records() -> Vec<gss_core::catalog::JournalRankRecord> {
@@ -1172,6 +1216,7 @@ pub fn run_packaging_smoke(output_dir: &Path) -> Result<(), String> {
         pdf_status: "unknown".into(),
         pdf_detail: "Synthetic fixture: no public-PDF check was performed.".into(),
         pdf_local_path: String::new(),
+        ..gss_core::models::Article::default()
     };
     let bare = gss_core::models::Article::new("Unranked Smoke");
     let xlsx = output_dir.join("packaging-smoke.xlsx");

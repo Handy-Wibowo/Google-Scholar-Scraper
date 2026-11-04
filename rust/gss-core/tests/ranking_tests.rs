@@ -177,6 +177,7 @@ fn ranking_preserves_every_metadata_field() {
         pdf_detail: "verified".into(),
         pdf_local_path: "C:/pdfs/a.pdf".into(),
         relevance_score: None,
+        ..Default::default()
     };
 
     let ranked = rank_articles("deep learning", vec![article.clone()], true);

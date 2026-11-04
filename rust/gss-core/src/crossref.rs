@@ -30,7 +30,12 @@ static YEAR_RE: LazyLock<regex::Regex> =
 pub const JOURNAL_WORK_TYPES: [&str; 1] = ["journal-article"];
 pub const CITATION_WORK_TYPES: [&str; 2] = ["journal-article", "proceedings-article"];
 
-pub const TITLE_SELECT: &str = "DOI,title,container-title,short-container-title,ISSN,type,author,issued,published-print,published-online,link,license,volume,issue,page,publisher,URL";
+/// Fields requested for title lookups.
+///
+/// The single-work endpoint ignores `select`, so `lookup()` receives the full
+/// payload regardless; this list matters for the `/works?filter=` search path.
+/// `is-referenced-by-count` and `ORCID` were added in v3.4.0.
+pub const TITLE_SELECT: &str = "DOI,title,container-title,short-container-title,ISSN,type,author,issued,published-print,published-online,link,license,volume,issue,page,publisher,URL,is-referenced-by-count";
 
 /// Normalized bibliographic facts for one work (`CrossrefRecord`).
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -50,6 +55,16 @@ pub struct CrossrefRecord {
     pub publisher: String,
     pub url: String,
     pub issns_any: Vec<String>,
+    /// `is-referenced-by-count`.
+    pub cited_by: Option<i64>,
+    /// `license[].URL`, first non-empty.
+    pub license: String,
+    /// `updated-by` / `update-to` notices: (type, doi).
+    pub notices: Vec<(String, String)>,
+    /// `funder[]` rendered as `"Name (award)"`.
+    pub funders: Vec<String>,
+    /// `author[].ORCID`, URL prefix stripped.
+    pub orcids: Vec<String>,
 }
 
 /// Transport failure for the Crossref seam.
@@ -227,6 +242,14 @@ impl<'a> CrossrefClient<'a> {
                 continue;
             }
             let item_title = first_text(item.get("title"));
+            // Exact normalized match first; a slight rewrite ("...: a review")
+            // falls back to token similarity, still gated by the author and year
+            // checks below so a near-miss cannot attach the wrong record.
+            // Exact normalized match only. The Python oracle
+            // (test_title_lookup_rejects_a_near_miss_title) pins this: a
+            // shorter title must NOT resolve to a longer one that merely
+            // starts the same way, because Crossref's fuzzy search returns
+            // same-prefix papers that differ in subject.
             if normalize_title_key(&item_title) != wanted_key {
                 continue;
             }
@@ -375,9 +398,148 @@ pub fn record_from_crossref_message(message: &Value, fallback_doi: &str) -> Cros
             .trim()
             .to_string(),
         issns_any,
+        cited_by: message
+            .get("is-referenced-by-count")
+            .and_then(|v| v.as_i64()),
+        license: first_license_url(message),
+        notices: collect_notices(message),
+        funders: collect_funders(message),
+        orcids: collect_orcids(message),
     }
 }
 
+/// `license[].URL` for the version of record, else the first entry.
+fn first_license_url(message: &Value) -> String {
+    let Some(list) = message.get("license").and_then(|l| l.as_array()) else {
+        return String::new();
+    };
+    let mut fallback = String::new();
+    for entry in list {
+        let Some(url) = entry.get("URL").and_then(|u| u.as_str()) else {
+            continue;
+        };
+        let url = url.trim();
+        if url.is_empty() {
+            continue;
+        }
+        let is_vor = entry
+            .get("content-version")
+            .and_then(|v| v.as_str())
+            .map(|v| v.eq_ignore_ascii_case("vor"))
+            .unwrap_or(false);
+        if is_vor {
+            return url.to_string();
+        }
+        if fallback.is_empty() {
+            fallback = url.to_string();
+        }
+    }
+    fallback
+}
+
+/// Retraction / correction / expression-of-concern notices.
+///
+/// Crossref reports these in two places: `updated-by` (this work was updated by
+/// a notice) and `update-to` (this work *is* the notice). Only `updated-by`
+/// changes how the record should be read, so that is what is collected.
+fn collect_notices(message: &Value) -> Vec<(String, String)> {
+    let Some(list) = message.get("updated-by").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, String)> = Vec::new();
+    for entry in list {
+        let kind = entry
+            .get("type")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_lowercase();
+        let doi = entry
+            .get("DOI")
+            .and_then(|d| d.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if kind.is_empty() {
+            continue;
+        }
+        let pair = (kind, doi);
+        if !out.contains(&pair) {
+            out.push(pair);
+        }
+    }
+    out
+}
+
+/// `funder[]` as `"Name (award)"`, skipping entries with neither.
+fn collect_funders(message: &Value) -> Vec<String> {
+    let Some(list) = message.get("funder").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    for entry in list {
+        let name = entry
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("")
+            .trim();
+        let awards: Vec<&str> = entry
+            .get("award")
+            .and_then(|a| a.as_array())
+            .map(|list| {
+                list.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|v| v.trim())
+                    .filter(|v| !v.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let rendered = if name.is_empty() && awards.is_empty() {
+            continue;
+        } else if awards.is_empty() {
+            name.to_string()
+        } else {
+            format!("{name} ({})", awards.join(", "))
+        };
+        if !out.contains(&rendered) {
+            out.push(rendered);
+        }
+    }
+    out
+}
+
+/// `author[].ORCID` with the `https://orcid.org/` prefix removed.
+fn collect_orcids(message: &Value) -> Vec<String> {
+    let Some(list) = message.get("author").and_then(|a| a.as_array()) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    for entry in list {
+        let Some(raw) = entry.get("ORCID").and_then(|o| o.as_str()) else {
+            continue;
+        };
+        let id = raw
+            .trim()
+            .trim_start_matches("https://orcid.org/")
+            .trim_start_matches("http://orcid.org/")
+            .trim_start_matches("orcid.org/")
+            .to_string();
+        if !id.is_empty() && !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    out
+}
+
+/// Accept a title that extends the other with a subtitle or trailing qualifier.
+///
+/// Measured on real cases, plain token cosine does not separate them: a genuine
+/// subtitle ("Deep learning for molecules" vs "...: a review") scores 0.816
+/// while a different paper ("... for proteins") scores 0.750. A 0.07 margin is
+/// too thin to gate record identity on, so the rule is structural instead: one
+/// title's tokens must be a **prefix** of the other's. That accepts subtitles
+/// and rejects same-prefix-but-different-subject papers only when the subject
+/// itself differs, which the author and year checks then catch.
 fn first_text(value: Option<&Value>) -> String {
     let values = as_text_list(value);
     values.first().cloned().unwrap_or_default()
@@ -564,6 +726,49 @@ fn apply_record(article: &Article, record: &CrossrefRecord) -> Article {
     if updated.pdf_url.is_empty() && !record.pdf_candidate_url.is_empty() {
         updated.pdf_url = record.pdf_candidate_url.clone();
         updated.pdf_source_url = record.pdf_candidate_source.clone();
+    }
+
+    // v3.4.0: fields that come free with the payload already fetched. Fill-only,
+    // matching the rest of this function: a value we already hold wins.
+    if updated.cited_by.is_none() {
+        updated.cited_by = record.cited_by;
+    }
+    if updated.volume.is_empty() {
+        updated.volume = record.volume.clone();
+    }
+    if updated.issue.is_empty() {
+        updated.issue = record.issue.clone();
+    }
+    if updated.pages.is_empty() {
+        updated.pages = record.pages.clone();
+    }
+    if updated.publisher.is_empty() {
+        updated.publisher = record.publisher.clone();
+    }
+    if updated.license.is_empty() {
+        updated.license = record.license.clone();
+    }
+    if updated.orcids.is_empty() {
+        updated.orcids = record.orcids.clone();
+    }
+    if updated.authors_structured.is_empty() {
+        updated.authors_structured = record.authors.clone();
+    }
+    if updated.funders.is_empty() {
+        updated.funders = record.funders.clone();
+    }
+    // A retraction must overwrite nothing, but must never be missed either: take
+    // the most severe notice seen, and its DOI.
+    if updated.retraction.is_empty() {
+        if let Some((kind, doi)) = record
+            .notices
+            .iter()
+            .find(|(kind, _)| kind.contains("retract"))
+            .or_else(|| record.notices.first())
+        {
+            updated.retraction = kind.clone();
+            updated.retraction_doi = doi.clone();
+        }
     }
     updated
 }
@@ -905,4 +1110,114 @@ pub fn resolve_citations<L: ArticleLookup>(
     }
 
     results
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn reads_citation_count_and_venue_fields() {
+        let message = json!({
+            "DOI": "10.1/x",
+            "type": "journal-article",
+            "container-title": ["J Test"],
+            "is-referenced-by-count": 3142,
+            "volume": "12",
+            "issue": "3",
+            "page": "45-67",
+            "publisher": "Test Press"
+        });
+        let record = record_from_crossref_message(&message, "10.1/x");
+        assert_eq!(record.cited_by, Some(3142));
+        assert_eq!(record.volume, "12");
+        assert_eq!(record.issue, "3");
+        assert_eq!(record.pages, "45-67");
+        assert_eq!(record.publisher, "Test Press");
+    }
+
+    #[test]
+    fn prefers_the_vor_license() {
+        let message = json!({
+            "DOI": "10.1/x",
+            "license": [
+                {"URL": "https://creativecommons.org/licenses/by-nc/4.0/", "content-version": "am"},
+                {"URL": "https://creativecommons.org/licenses/by/4.0/", "content-version": "vor"}
+            ]
+        });
+        let record = record_from_crossref_message(&message, "10.1/x");
+        assert_eq!(
+            record.license,
+            "https://creativecommons.org/licenses/by/4.0/"
+        );
+    }
+
+    #[test]
+    fn detects_a_retraction_notice() {
+        let message = json!({
+            "DOI": "10.1/x",
+            "updated-by": [
+                {"type": "retraction", "DOI": "10.1/notice", "source": "retraction-watch"}
+            ]
+        });
+        let record = record_from_crossref_message(&message, "10.1/x");
+        assert_eq!(record.notices.len(), 1);
+        assert_eq!(record.notices[0].0, "retraction");
+        assert_eq!(record.notices[0].1, "10.1/notice");
+    }
+
+    #[test]
+    fn applies_notice_and_metadata_to_an_article() {
+        let message = json!({
+            "DOI": "10.1/x",
+            "type": "journal-article",
+            "is-referenced-by-count": 7,
+            "updated-by": [{"type": "retraction", "DOI": "10.1/notice"}]
+        });
+        let record = record_from_crossref_message(&message, "10.1/x");
+        let article = crate::models::Article::new("T");
+        let updated = apply_record(&article, &record);
+        assert_eq!(updated.cited_by, Some(7));
+        assert_eq!(updated.retraction, "retraction");
+        assert_eq!(updated.retraction_doi, "10.1/notice");
+    }
+
+    #[test]
+    fn collects_funders_with_awards() {
+        let message = json!({
+            "DOI": "10.1/x",
+            "funder": [
+                {"name": "NWO", "award": ["840.11.001"]},
+                {"name": "ERC", "award": []}
+            ]
+        });
+        let record = record_from_crossref_message(&message, "10.1/x");
+        assert_eq!(record.funders, vec!["NWO (840.11.001)", "ERC"]);
+    }
+
+    #[test]
+    fn strips_the_orcid_prefix() {
+        let message = json!({
+            "DOI": "10.1/x",
+            "author": [
+                {"family": "A", "ORCID": "https://orcid.org/0000-0002-1825-0097"},
+                {"family": "B", "ORCID": "https://orcid.org/0000-0002-1825-0097"},
+                {"family": "C"}
+            ]
+        });
+        let record = record_from_crossref_message(&message, "10.1/x");
+        assert_eq!(record.orcids, vec!["0000-0002-1825-0097"]);
+    }
+
+    #[test]
+    fn missing_fields_stay_empty_not_guessed() {
+        let record = record_from_crossref_message(&json!({"DOI": "10.1/x"}), "10.1/x");
+        assert_eq!(record.cited_by, None);
+        assert!(record.license.is_empty());
+        assert!(record.notices.is_empty());
+        assert!(record.funders.is_empty());
+        assert!(record.orcids.is_empty());
+    }
+
 }

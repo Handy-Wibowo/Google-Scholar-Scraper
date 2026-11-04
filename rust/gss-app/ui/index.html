@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Google Scholar Scraper v3.3.1</title>
+  <title>Google Scholar Scraper v3.4.0</title>
   <style>
     :root {
       --app-bg: #f3f6fb; --surface: #ffffff; --surface-alt: #f8fafc;
@@ -161,6 +161,12 @@
     .menu label:hover { background: var(--selection); }
     .toolbar-group { display: flex; align-items: center; gap: 6px; }
     .toolbar-group label { display: flex; align-items: center; gap: 4px; }
+    .badge {
+      display: inline-block; padding: 0 4px; border-radius: 3px;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.02em;
+      vertical-align: middle;
+    }
+    .badge.retracted { background: var(--error, #cf222e); color: #fff; }
     dialog pre {
       background: var(--surface-alt); border: 1px solid var(--border);
       border-radius: 4px; padding: 10px; white-space: pre-wrap;
@@ -179,7 +185,7 @@
 
   <div class="header">
     <div class="titles">
-      <h1>Google Scholar Scraper v3.3.1</h1>
+      <h1>Google Scholar Scraper v3.4.0</h1>
       <div class="subtitle">Search, rank, review, and export Scholar results.</div>
     </div>
     <button id="btnCancel" disabled>Cancel</button>
@@ -209,6 +215,7 @@
       <label for="rankingYear">Rank year</label>
       <input type="text" id="rankingYear" class="small" />
       <button id="btnImport">Import</button>
+      <button id="btnGapReport" title="List journals with no imported ranking match">Unranked gaps</button>
     </div>
     <div class="row">
       <label><input type="checkbox" id="rankingEnabled" checked /> Rank by relevance (local scoring)</label>
@@ -241,6 +248,7 @@
       <span class="spacer"></span>
       <button id="btnReveal" hidden>Open folder</button>
       <button id="btnCheck" disabled>Check metadata / PDFs</button>
+      <button id="btnMetadataOnly" disabled title="Refresh Crossref metadata without re-checking every PDF link">Refresh metadata only</button>
       <button id="btnDownload" disabled>Download selected PDFs</button>
       <button id="btnDetails" disabled>Details</button>
     </div>
@@ -248,6 +256,7 @@
       <label for="pdfFilter">PDF filter</label>
       <select id="pdfFilter"></select>
       <span id="appliedYear">Years: any time</span>
+      <span id="yearHistogram" class="summary" title="Publication-year distribution of the stored records"></span>
       <span class="spacer"></span>
       <span class="toolbar-group">
         <label for="exportScope">Export</label>
@@ -263,6 +272,8 @@
         <label><input type="checkbox" data-col="rank" checked /> Rank</label>
         <label><input type="checkbox" data-col="pdf" checked /> PDF</label>
         <label><input type="checkbox" data-col="link" checked /> Link</label>
+        <label><input type="checkbox" data-col="cited" checked /> Cited by</label>
+        <label><input type="checkbox" data-col="oa" checked /> OA status</label>
       </div>
       <label class="notice"><input type="checkbox" id="compactRows" /> Compact</label>
       <button id="btnExportExcel" disabled title="Export visible (filtered) rows">Excel (visible)</button>
@@ -278,6 +289,8 @@
           <col data-col="rank" style="width:10%" />
           <col data-col="pdf" style="width:12%" />
           <col data-col="link" style="width:11%" />
+          <col data-col="cited" style="width:6%" />
+          <col data-col="oa" style="width:7%" />
         </colgroup>
         <thead>
           <tr>
@@ -287,6 +300,8 @@
             <th class="sortable" data-key="rank" scope="col" aria-sort="none" title="Sort by journal rank">Rank</th>
             <th class="sortable" data-key="pdf" scope="col" aria-sort="none" title="Sort by public-PDF status">PDF</th>
             <th class="sortable" data-key="link" scope="col" aria-sort="none" title="Sort by link presence">Link</th>
+            <th class="sortable" data-key="cited" scope="col" aria-sort="none" title="Sort by citation count (Crossref / OpenAlex)">Cited</th>
+            <th class="sortable" data-key="oa" scope="col" aria-sort="none" title="Open-access status reported by OpenAlex">OA</th>
           </tr>
         </thead>
         <tbody id="tableBody" role="rowgroup"></tbody>

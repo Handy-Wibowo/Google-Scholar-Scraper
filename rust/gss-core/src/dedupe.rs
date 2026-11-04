@@ -92,7 +92,43 @@ pub fn normalize_article(article: &Article) -> Article {
         pdf_status,
         pdf_detail: normalize_display_text(&article.pdf_detail),
         pdf_local_path: article.pdf_local_path.trim().to_string(),
+        cited_by: article.cited_by,
+        volume: normalize_display_text(&article.volume),
+        issue: normalize_display_text(&article.issue),
+        pages: normalize_display_text(&article.pages),
+        publisher: normalize_display_text(&article.publisher),
+        license: normalize_link(&article.license),
+        oa_status: normalize_display_text(&article.oa_status).to_lowercase(),
+        pmid: article.pmid.trim().to_string(),
+        pmcid: article.pmcid.trim().to_string(),
+        orcids: article.orcids.clone(),
+        authors_structured: article.authors_structured.clone(),
+        retraction: article.retraction.trim().to_lowercase(),
+        retraction_doi: normalize_doi(&article.retraction_doi),
+        funders: article.funders.clone(),
+        sjr_matched_by: article.sjr_matched_by.clone(),
+        sinta_matched_by: article.sinta_matched_by.clone(),
     }
+}
+
+/// First non-empty of the two values (`merge_articles` field policy).
+fn prefer(existing: &str, incoming: &str) -> String {
+    if existing.trim().is_empty() {
+        incoming.to_string()
+    } else {
+        existing.to_string()
+    }
+}
+
+/// Union preserving order, existing first, without duplicates.
+fn merge_unique(existing: &[String], incoming: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = existing.to_vec();
+    for value in incoming {
+        if !out.contains(value) {
+            out.push(value.clone());
+        }
+    }
+    out
 }
 
 pub fn is_valid_article(article: &Article) -> bool {
@@ -421,5 +457,26 @@ fn merge_articles(existing: &Article, incoming: &Article) -> Article {
         } else {
             existing.pdf_local_path.clone()
         },
+        // Merged metadata: prefer whichever copy actually resolved the value.
+        cited_by: existing.cited_by.or(incoming.cited_by),
+        volume: prefer(&existing.volume, &incoming.volume),
+        issue: prefer(&existing.issue, &incoming.issue),
+        pages: prefer(&existing.pages, &incoming.pages),
+        publisher: prefer(&existing.publisher, &incoming.publisher),
+        license: prefer(&existing.license, &incoming.license),
+        oa_status: prefer(&existing.oa_status, &incoming.oa_status),
+        pmid: prefer(&existing.pmid, &incoming.pmid),
+        pmcid: prefer(&existing.pmcid, &incoming.pmcid),
+        orcids: merge_unique(&existing.orcids, &incoming.orcids),
+        authors_structured: merge_unique(
+            &existing.authors_structured,
+            &incoming.authors_structured,
+        ),
+        // A retraction notice on either copy must never be lost in a merge.
+        retraction: prefer(&existing.retraction, &incoming.retraction),
+        retraction_doi: prefer(&existing.retraction_doi, &incoming.retraction_doi),
+        funders: merge_unique(&existing.funders, &incoming.funders),
+        sjr_matched_by: prefer(&existing.sjr_matched_by, &incoming.sjr_matched_by),
+        sinta_matched_by: prefer(&existing.sinta_matched_by, &incoming.sinta_matched_by),
     }
 }

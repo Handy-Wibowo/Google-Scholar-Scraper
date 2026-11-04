@@ -1,5 +1,51 @@
 # Changelog
 
+## 3.4.0
+
+Normal release of the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+published at the
+[v3.4.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v3.4.0).
+
+Phase 1 of the [roadmap](docs/ROADMAP.md). Every item reads a payload the app
+already downloads; the phase adds **no new network requests**.
+
+### Added
+
+- **Citation counts.** A `Cited` column (sortable) from Crossref
+  `is-referenced-by-count`, falling back to OpenAlex `cited_by_count`.
+- **Open-access status.** An `OA` column from OpenAlex `open_access.oa_status`
+  (gold / green / bronze / hybrid / diamond / closed).
+- **Retraction and correction badges.** A red `RETRACTED` badge on the title cell
+  when Crossref `updated-by` reports a notice, with the notice DOI in the tooltip
+  and a `Notice:` line in the details dialog.
+- **Publication venue.** Volume, issue, pages, publisher, licence, PMID, PMCID,
+  funding acknowledgements and ORCIDs now appear in the details dialog.
+- **Metadata-only refresh.** A `Refresh metadata only` button re-resolves
+  DOI/journal/rank without re-validating every public-PDF link, so iterating on
+  ranking data on a few hundred records no longer costs minutes of network.
+- **Year distribution** in the summary bar (`2017–2025, 57% since 2020`).
+- **Unranked-judgement report.** `Unranked gaps` lists every journal with no
+  imported ranking match, with its ISSNs and record count, so the missing rows can
+  be sourced and re-imported.
+- **Journal ranking trend** in the details dialog, read from the years the
+  catalog already retains.
+- **Catalog match provenance.** The details dialog shows whether an SJR/SINTA
+  label came from a validated ISSN or a title match
+  (`[matched by issn:1467-5463]`).
+
+### Notes
+
+- `Article` gained fourteen optional fields. All are `#[serde(default)]`, so a
+  results sidecar written by 3.3.x still loads; a missing key would otherwise
+  discard the whole restored session.
+- `EXPORT_COLUMNS` stays at its frozen 20 entries — the new fields are visible in
+  the UI and the details dialog, not in the parity-gated CSV/BibTeX/RIS output.
+- Fuzzy title matching (roadmap item 4.7) was implemented, then **reverted**: the
+  Python oracle pins that a shorter title must not resolve to a longer one that
+  merely shares a prefix, and Crossref's fuzzy search returns same-prefix papers
+  on different subjects. Exact normalized matching remains.
+
 ## 3.3.1
 
 Normal release of the
