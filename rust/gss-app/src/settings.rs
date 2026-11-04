@@ -172,6 +172,38 @@ pub fn load_catalog() -> gss_core::catalog::JournalCatalog {
     gss_core::catalog::JournalCatalog::from_records(records)
 }
 
+const BIBTEX_KEYS_FILE: &str = "bibtex-keys.json";
+
+/// `%APPDATA%\<identifier>\bibtex-keys.json`.
+pub fn bibtex_keys_path() -> Option<PathBuf> {
+    settings_path().map(|p| p.with_file_name(BIBTEX_KEYS_FILE))
+}
+
+/// DOI -> BibTeX key, so a re-export never renumbers an existing `\cite{}`.
+pub fn load_bibtex_keys() -> std::collections::BTreeMap<String, String> {
+    let Some(path) = bibtex_keys_path() else {
+        return Default::default();
+    };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return Default::default();
+    };
+    serde_json::from_slice(&bytes).unwrap_or_default()
+}
+
+pub fn save_bibtex_keys(keys: &std::collections::BTreeMap<String, String>) -> Result<(), String> {
+    let Some(path) = bibtex_keys_path() else {
+        return Err("APPDATA is not set.".to_string());
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let bytes = serde_json::to_vec_pretty(keys).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 const CACHE_FILE: &str = "crossref-cache.json";
 
 /// DOI lookup cache shared by enrichment and citation resolution (1.2).

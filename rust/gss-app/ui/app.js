@@ -139,7 +139,9 @@ function init() {
   $("btnImport").onclick = importRanking;
   $("btnDownload").onclick = downloadSelected;
   $("btnDetails").onclick = openDetail;
-  $("btnExportExcel").onclick = () => exportSpreadsheet("excel");
+  // Excel now goes through the rich writer (freeze panes, filters, colouring,
+  // hyperlinks). CSV stays on the parity-gated path.
+  $("btnExportExcel").onclick = richExcelExport;
   $("btnExportCsv").onclick = () => exportSpreadsheet("csv");
   $("btnExportCitations").onclick = openCitationsDialog;
   $("btnBrowse").onclick = browseFolder;
@@ -158,6 +160,33 @@ function init() {
   $("btnRetry").onclick = retryLastSearch;
   $("btnMetadataOnly").onclick = () => checkMetadataPdfs(true);
   $("btnGapReport").onclick = showGapReport;
+  $("btnExportMenu").onclick = (e) => {
+    e.stopPropagation();
+    toggleMenu("exportMenu", "btnExportMenu", !$("exportMenu").classList.contains("open"));
+  };
+  const bindExport = (id, fn) => {
+    $(id).onclick = () => {
+      toggleMenu("exportMenu", "btnExportMenu", false);
+      fn();
+    };
+  };
+  bindExport("menuExcelRich", richExcelExport);
+  bindExport("menuExcelGrouped", () => {
+    if (!$("groupBy").value) $("groupBy").value = "year";
+    richExcelExport();
+  });
+  for (const format of ["json", "markdown", "tsv", "enw", "reading-list", "journals", "details"]) {
+    const id = "menu" + format.split("-").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("");
+    const el = $(id);
+    if (el) bindExport(id, () => extraExport(format));
+  }
+  bindExport("menuCsl", () => extraCitationExport("csl-json"));
+  bindExport("menuBibStable", () => extraCitationExport("bibtex-stable"));
+  bindExport("menuBibFiles", () => extraCitationExport("bibtex-files"));
+  bindExport("menuGroupedBib", () => {
+    if (!$("groupBy").value) $("groupBy").value = "year";
+    extraCitationExport("grouped");
+  });
   $("btnToggleConfig").onclick = () => toggleConfig();
   $("exportScope").onchange = () => renderResults();
   $("compactRows").onchange = () => { applyDensity(); scheduleSave(); };
@@ -983,6 +1012,7 @@ function onTableContextMenu(e) {
     ["Reveal PDF in Explorer", !localPath, () => revealRecordPdf(a)],
     ["Copy title", !a.title, () => copyText(a.title || "")],
     ["Copy DOI", !doi, () => copyText(doi)],
+    ["Copy formatted citation", false, () => copyFormattedCitation(index)],
     ["Details", false, () => openDetailFor(index)],
   ];
   for (const [label, disabled, action] of items) {
@@ -1351,6 +1381,120 @@ function showGapReport() {
     ? "Every stored record already carries a rank label."
     : `${gaps.size} distinct journal(s) across ${storedArticles.length} records have no SJR/SINTA match:\n\n${lines.join("\n")}`;
   if (!$("errorDialog").open) $("errorDialog").showModal();
+}
+
+// ---- extra exports (P2) ----
+const EXTRA_FORMATS = {
+  json: "scholar_articles.json",
+  markdown: "scholar_articles.md",
+  tsv: "scholar_articles.tsv",
+  enw: "scholar_articles.enw",
+  "reading-list": "scholar_reading_list.html",
+  journals: "scholar_journals.csv",
+  details: "scholar_details.txt",
+};
+const EXTRA_CITATIONS = {
+  "csl-json": "scholar_citations.json",
+  "bibtex-stable": "scholar_citations.bib",
+  "bibtex-files": "scholar_citations_files.bib",
+  grouped: "scholar_bibliography.md",
+};
+
+function exportRecords() {
+  const scope = $("exportScope").value || "visible";
+  return scope === "selected"
+    ? [...selection].map((i) => storedArticles[i]).filter(Boolean)
+    : visibleArticles().map(([, a]) => a);
+}
+
+function exportFolder() {
+  return (currentRequest && currentRequest.outputFolder) || $("folder").value.trim();
+}
+
+function selectedColumns() {
+  // Hidden columns are omitted from the export, matching what is on screen.
+  const labels = {
+    title: "Title", authors: "Authors", link: "Link", index: "Relevance Score",
+    rank: "SJR Quartile", pdf: "PDF Status",
+  };
+  return Object.keys(labels)
+    .filter((key) => !hiddenColumns.has(key))
+    .map((key) => labels[key]);
+}
+
+async function extraExport(format) {
+  const records = exportRecords();
+  if (records.length === 0) {
+    setStatus("Ready", "No results to export.", "ready");
+    return;
+  }
+  const path = joinPath(exportFolder(), EXTRA_FORMATS[format]);
+  try {
+    await invoke("export_tabular", { articles: records, path, format, columns: selectedColumns() });
+    setStatus("Ready", `Exported ${records.length} result(s) to ${path}.`, "ready");
+    rememberExportFolder(path);
+  } catch (err) {
+    const msg = errMessage(err).replace("Export failed: ", "");
+    setStatus("Ready", `Export failed: ${msg}`, "error");
+    showError("Export failed", msg);
+  }
+}
+
+async function extraCitationExport(format) {
+  const records = exportRecords();
+  if (records.length === 0) {
+    setStatus("Ready", "No results to export.", "ready");
+    return;
+  }
+  const path = joinPath(exportFolder(), EXTRA_CITATIONS[format]);
+  try {
+    await invoke("export_citations_extra", {
+      articles: records,
+      path,
+      format,
+      style: $("citeStyle").value,
+      groupBy: $("groupBy").value || null,
+    });
+    setStatus("Ready", `Exported ${records.length} citation(s) to ${path}.`, "ready");
+    rememberExportFolder(path);
+  } catch (err) {
+    const msg = errMessage(err).replace("Export failed: ", "");
+    setStatus("Ready", `Export failed: ${msg}`, "error");
+    showError("Export failed", msg);
+  }
+}
+
+async function richExcelExport() {
+  const records = exportRecords();
+  if (records.length === 0) {
+    setStatus("Ready", "No results to export.", "ready");
+    return;
+  }
+  const group = $("groupBy").value || null;
+  const path = joinPath(exportFolder(), group ? `scholar_articles_by_${group}.xlsx` : "scholar_articles.xlsx");
+  try {
+    await invoke("export_excel_rich", { articles: records, path, columns: selectedColumns(), groupBy: group });
+    setStatus("Ready", `Exported ${records.length} result(s) to ${path}.`, "ready");
+    rememberExportFolder(path);
+  } catch (err) {
+    const msg = errMessage(err).replace("Export failed: ", "");
+    setStatus("Ready", `Export failed: ${msg}`, "error");
+    showError("Export failed", msg);
+  }
+}
+
+async function copyFormattedCitation(index) {
+  const article = storedArticles[index];
+  if (!article) return;
+  try {
+    const text = await invoke("format_citation_text", { article, style: $("citeStyle").value });
+    if (text) {
+      copyText(text);
+      setStatus("Copied", `Copied the ${$("citeStyle").value.toUpperCase()} reference for this record.`, "success");
+    }
+  } catch (err) {
+    showError("Copy failed", errMessage(err));
+  }
 }
 
 // ---- retry ----

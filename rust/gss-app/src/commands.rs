@@ -1148,6 +1148,157 @@ pub fn export_excel(
         .map_err(CommandError::export_failed)
 }
 
+/// `export_excel_rich`: formatted workbook (freeze, filters, colours, links).
+#[tauri::command]
+pub fn export_excel_rich(
+    articles: Vec<gss_core::models::Article>,
+    path: String,
+    columns: Vec<String>,
+    group_by: Option<String>,
+) -> Result<String, CommandError> {
+    if articles.is_empty() {
+        return Err(CommandError::no_results_to_export());
+    }
+    gss_core::exports_extra::save_to_excel_rich(
+        &articles,
+        Path::new(&path),
+        &columns,
+        group_by.as_deref(),
+    )
+    .map(|_| format!("Exported {} result(s) to {path}.", articles.len()))
+    .map_err(CommandError::export_failed)
+}
+
+/// `export_tabular`: CSV-adjacent formats that are separate writers.
+///
+/// `format` is one of `json`, `markdown`, `tsv`, `enw`, `details`. None of
+/// these touch the parity-gated CSV/BibTeX/RIS paths.
+#[tauri::command]
+pub fn export_tabular(
+    articles: Vec<gss_core::models::Article>,
+    path: String,
+    format: String,
+    columns: Vec<String>,
+) -> Result<String, CommandError> {
+    if articles.is_empty() {
+        return Err(CommandError::no_results_to_export());
+    }
+    let target = Path::new(&path);
+    let result = match format.as_str() {
+        "json" => gss_core::exports_extra::save_to_json(&articles, target, &columns),
+        "markdown" => gss_core::exports_extra::save_to_markdown(&articles, target, &columns),
+        "tsv" => gss_core::exports_extra::save_to_tsv(&articles, target, &columns),
+        "enw" => gss_core::exports_extra::save_to_enw(&articles, target, &columns),
+        "details" => gss_core::exports_extra::save_details_text(&articles, target),
+        "reading-list" => gss_core::exports_extra::save_reading_list_html(
+            &articles,
+            target,
+            "Google Scholar reading list",
+        ),
+        "journals" => gss_core::exports_extra::save_journal_aggregation(&articles, target),
+        other => {
+            return Err(CommandError::new(
+                crate::errors::UNSUPPORTED_FORMAT,
+                format!("Unsupported export format: {other}"),
+            ))
+        }
+    };
+    result
+        .map(|_| format!("Exported {} result(s) to {path}.", articles.len()))
+        .map_err(CommandError::export_failed)
+}
+
+/// `export_citations_extra`: CSL-JSON and stable-key BibTeX, separate from the
+/// parity-gated `export_citations`.
+#[tauri::command]
+pub fn export_citations_extra(
+    articles: Vec<gss_core::models::Article>,
+    path: String,
+    format: String,
+    style: Option<String>,
+    group_by: Option<String>,
+) -> Result<String, CommandError> {
+    if articles.is_empty() {
+        return Err(CommandError::no_results_to_export());
+    }
+    // Resolve against the same storage the UI shows, reusing the on-disk cache.
+    let mut transport = ReqwestCrossref::new();
+    let mut client = gss_core::crossref::CrossrefClient::new(&mut transport);
+    let inner = gss_core::crossref::HttpClientLookup {
+        client: &mut client,
+    };
+    let cache_file = crate::settings::cache_path();
+    let mut lookup = CachedLookup::new(inner, cache_file.clone());
+    let records =
+        gss_core::crossref::resolve_citations(&articles, None, None, &mut lookup, None, None);
+    lookup.flush(cache_file.as_ref());
+
+    let target = Path::new(&path);
+    let style = style
+        .as_deref()
+        .and_then(gss_core::exports_extra::CitationStyle::parse)
+        .unwrap_or(gss_core::exports_extra::CitationStyle::Apa);
+
+    let result = match format.as_str() {
+        "csl-json" => gss_core::exports_extra::save_to_csl_json(&records, target),
+        "bibtex-stable" => {
+            let mut keys = crate::settings::load_bibtex_keys();
+            let saved = gss_core::exports_extra::save_to_bibtex_stable(&records, target, &mut keys);
+            if saved.is_ok() {
+                let _ = crate::settings::save_bibtex_keys(&keys);
+            }
+            saved
+        }
+        "bibtex-files" => {
+            gss_core::exports_extra::save_to_bibtex_with_files(&records, &articles, target)
+        }
+        "grouped" => gss_core::exports_extra::save_grouped_bibliography(
+            &records,
+            &articles,
+            target,
+            group_by.as_deref().unwrap_or("year"),
+            style,
+        ),
+        other => {
+            return Err(CommandError::new(
+                crate::errors::UNSUPPORTED_FORMAT,
+                format!("Unsupported citation format: {other}"),
+            ))
+        }
+    };
+    result
+        .map(|_| format!("Exported {} citation(s) to {path}.", articles.len()))
+        .map_err(CommandError::export_failed)
+}
+
+/// One formatted reference line, for the clipboard.
+#[tauri::command]
+pub fn format_citation_text(article: gss_core::models::Article, style: String) -> String {
+    let style = gss_core::exports_extra::CitationStyle::parse(&style)
+        .unwrap_or(gss_core::exports_extra::CitationStyle::Apa);
+    // Reuse the resolver so the formatted line has resolved authors and venue.
+    let mut transport = ReqwestCrossref::new();
+    let mut client = gss_core::crossref::CrossrefClient::new(&mut transport);
+    let inner = gss_core::crossref::HttpClientLookup {
+        client: &mut client,
+    };
+    let cache_file = crate::settings::cache_path();
+    let mut lookup = CachedLookup::new(inner, cache_file.clone());
+    let records = gss_core::crossref::resolve_citations(
+        std::slice::from_ref(&article),
+        None,
+        None,
+        &mut lookup,
+        None,
+        None,
+    );
+    lookup.flush(cache_file.as_ref());
+    match records.first() {
+        Some(record) => gss_core::exports_extra::format_citation(record, style),
+        None => article.title.clone(),
+    }
+}
+
 /// `export_csv` — synchronous on the UI thread.
 #[tauri::command]
 pub fn export_csv(

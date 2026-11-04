@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Google Scholar Scraper v3.4.0</title>
+  <title>Google Scholar Scraper v3.5.0</title>
   <style>
     :root {
       --app-bg: #f3f6fb; --surface: #ffffff; --surface-alt: #f8fafc;
@@ -185,7 +185,7 @@
 
   <div class="header">
     <div class="titles">
-      <h1>Google Scholar Scraper v3.4.0</h1>
+      <h1>Google Scholar Scraper v3.5.0</h1>
       <div class="subtitle">Search, rank, review, and export Scholar results.</div>
     </div>
     <button id="btnCancel" disabled>Cancel</button>
@@ -259,12 +259,36 @@
       <span id="yearHistogram" class="summary" title="Publication-year distribution of the stored records"></span>
       <span class="spacer"></span>
       <span class="toolbar-group">
+        <label for="citeStyle">Cite as</label>
+        <select id="citeStyle">
+          <option value="apa">APA</option>
+          <option value="ieee">IEEE</option>
+          <option value="vancouver">Vancouver</option>
+        </select>
+      </span>
+      <span class="toolbar-group">
         <label for="exportScope">Export</label>
         <select id="exportScope">
           <option value="visible">Visible (filtered) rows</option>
           <option value="selected">Selected rows</option>
         </select>
       </span>
+      <button id="btnExportMenu">More export…</button>
+      <div class="menu" id="exportMenu">
+        <button id="menuExcelRich">Excel (formatted, freeze + filters)</button>
+        <button id="menuExcelGrouped">Excel grouped by →</button>
+        <button id="menuJson">JSON</button>
+        <button id="menuMarkdown">Markdown table</button>
+        <button id="menuTsv">TSV</button>
+        <button id="menuEnw">EndNote (.enw)</button>
+        <button id="menuReadingList">HTML reading list</button>
+        <button id="menuJournals">Journal aggregation (CSV)</button>
+        <button id="menuDetails">Details text</button>
+        <button id="menuCsl">CSL-JSON citations</button>
+        <button id="menuBibStable">BibTeX (stable keys)</button>
+        <button id="menuBibFiles">BibTeX (with PDF paths)</button>
+        <button id="menuGroupedBib">Grouped bibliography</button>
+      </div>
       <button id="btnColumns">Columns</button>
       <div class="menu" id="columnsMenu">
         <label><input type="checkbox" data-col="authors" checked /> Authors</label>
@@ -276,6 +300,15 @@
         <label><input type="checkbox" data-col="oa" checked /> OA status</label>
       </div>
       <label class="notice"><input type="checkbox" id="compactRows" /> Compact</label>
+      <span class="toolbar-group">
+        <label for="groupBy">Group</label>
+        <select id="groupBy">
+          <option value="">None</option>
+          <option value="year">Year</option>
+          <option value="journal">Journal</option>
+          <option value="pdf">PDF status</option>
+        </select>
+      </span>
       <button id="btnExportExcel" disabled title="Export visible (filtered) rows">Excel (visible)</button>
       <button id="btnExportCsv" disabled title="Export visible (filtered) rows">CSV (visible)</button>
       <button id="btnExportCitations" disabled>Citations</button>

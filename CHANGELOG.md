@@ -1,5 +1,53 @@
 # Changelog
 
+## 3.5.0
+
+Normal release of the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+published at the
+[v3.5.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v3.5.0).
+
+Phase 2 of the [roadmap](docs/ROADMAP.md): the output now arrives usable without
+post-processing. Every new writer is a **separate entry point**, so the
+parity-gated CSV/BibTeX/RIS files remain byte-identical to the Python oracle.
+
+### Excel
+
+- A **formatted workbook**: frozen header row and title column, autofilter, sized
+  columns, wrapped titles, clickable Link/DOI cells, and colour-coded journal
+  rank (Q1–Q4 / S1–S4), PDF status, and retracted records.
+- A **Summary sheet** with counts by PDF status and by rank.
+- Optional **grouped worksheets** — one sheet per year, journal or PDF status,
+  with Excel-safe sheet names.
+
+### New export formats
+
+JSON, Markdown table, TSV, EndNote `.enw`, a self-contained **HTML reading list**
+(opens in any browser, no app needed), journal-level aggregation CSV, and the
+details text of every record. All available from the `More export…` menu, and
+column-scoped: hiding a column also omits it from the export.
+
+### Citations
+
+- **CSL-JSON**, the interchange format Zotero, Mendeley, Paperpile and Pandoc read.
+- **Stable BibTeX keys** persisted in `bibtex-keys.json`, so re-exporting after
+  adding a record does not renumber entries and break an existing `\cite{}`.
+- **BibTeX with `file = {...}`** attachment paths for downloaded PDFs.
+- **Grouped bibliography** by year, journal or rank.
+- **APA / IEEE / Vancouver** formatting, available on the clipboard from the row
+  context menu (`Copy formatted citation`) and via a `Cite as` selector.
+
+### Correctness
+
+Unresolved records carry Google Scholar's raw citation line, which mixes authors,
+venue and year. The new CSL-JSON and ENW writers deliberately **do not** parse it
+into structured authors — matching `SCHOLAR_AUTHORS_WARNING`: the raw line travels
+in a note field instead. Two tests pin this.
+
+### Compatibility
+
+`CSV`, `BibTeX` and `RIS` output is unchanged; parity gate 4 remains zero-diff.
+
 ## 3.4.0
 
 Normal release of the

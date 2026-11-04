@@ -10,6 +10,7 @@ pub mod client;
 pub mod crossref;
 pub mod dedupe;
 pub mod exporters;
+pub mod exports_extra;
 pub mod models;
 pub mod parser;
 pub mod pdf;
