@@ -1,5 +1,49 @@
 # Changelog
 
+## 3.3.1
+
+Normal release of the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+published at the
+[v3.3.1 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v3.3.1).
+
+Phase 0 of the [roadmap](docs/ROADMAP.md): foundations that make every later
+phase debuggable and stop the app from wedging itself.
+
+### Fixed
+
+- **A worker panic no longer bricks the app.** The running latch was cleared by
+  hand on each terminal path; a panic (or a later early `return`) skipped that
+  call, leaving every subsequent command answering "An operation is already
+  running." until restart. A RAII guard now clears the latch unconditionally —
+  panic, early return, or normal completion.
+- **A Crossref outage no longer reports as success.** `enrich_error` was
+  hardcoded empty, so a total provider failure looked identical to a run where
+  nothing matched, and the UI's "Check finished with errors" branch was dead
+  code. Transport, 5xx, 429 and unparseable responses are now counted and
+  reported (`N metadata lookup(s) could not be completed`).
+- Both outbound HTTP clients gained connect and total timeouts; a stalled mirror
+  could previously hold a worker thread indefinitely.
+
+### Added
+
+- **Logging.** A dependency-free file logger under
+  `%APPDATA%\com.googlescholarscraper.app\logs\gss-YYYYMMDDZ.log` records every
+  operation start/end, provider failures, and crashes, keeping 5 days. A panic
+  hook writes `crash-<unix>.txt` with the payload, thread and location.
+- **Typed command errors.** Commands now reject with `{code, message}` and the UI
+  switches on the code, so changing a message can no longer silently disable a
+  branch.
+- **The imported ranking catalog persists** to `catalog.json` and is restored at
+  startup — ranks no longer require re-importing every launch.
+- **Settings carry a schema version.** A corrupt or older-layout file is replaced
+  by defaults and the window says so instead of losing everything silently.
+- **A persistent Crossref cache keyed by DOI** (`crossref-cache.json`), shared by
+  metadata enrichment and citation resolution; a repeat run costs no requests.
+- **DOI is now a dedupe key**, so a publisher page and a repository copy of the
+  same paper collapse even when their titles and links differ. The summary
+  reports how many merges were DOI-matched.
+
 ## 3.3.0
 
 Normal release of the

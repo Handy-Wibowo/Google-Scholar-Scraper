@@ -33,7 +33,7 @@ pub const CITATION_WORK_TYPES: [&str; 2] = ["journal-article", "proceedings-arti
 pub const TITLE_SELECT: &str = "DOI,title,container-title,short-container-title,ISSN,type,author,issued,published-print,published-online,link,license,volume,issue,page,publisher,URL";
 
 /// Normalized bibliographic facts for one work (`CrossrefRecord`).
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CrossrefRecord {
     pub doi: String,
     pub journal: String,
@@ -72,6 +72,8 @@ pub struct CrossrefClient<'a> {
     pub base_url: String,
     pub user_agent: String,
     pub max_response_bytes: usize,
+    /// Count of provider-side failures (transport, 5xx, 429, bad JSON).
+    transport_failures: u32,
 }
 
 impl<'a> CrossrefClient<'a> {
@@ -81,7 +83,22 @@ impl<'a> CrossrefClient<'a> {
             base_url: CROSSREF_BASE_URL.to_string(),
             user_agent: DEFAULT_USER_AGENT.to_string(),
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
+            transport_failures: 0,
         }
+    }
+
+    /// Transport/HTTP failures seen by this client.
+    ///
+    /// `get_json` collapses "transport error", "non-200", "oversize" and
+    /// "unparseable" into `None`, which is right for a per-record lookup but
+    /// hides a total provider outage. Callers read this counter after a pass to
+    /// tell "nothing matched" from "the provider never answered".
+    pub fn transport_failures(&self) -> u32 {
+        self.transport_failures
+    }
+
+    fn note_transport_failure(&mut self) {
+        self.transport_failures = self.transport_failures.saturating_add(1);
     }
 
     fn get_json(&mut self, url: &str) -> Option<Value> {
@@ -89,15 +106,28 @@ impl<'a> CrossrefClient<'a> {
             ("User-Agent".to_string(), self.user_agent.clone()),
             ("Accept".to_string(), "application/json".to_string()),
         ];
-        let (body, status) = self.fetcher.get(url, &headers).ok()?;
+        let Ok((body, status)) = self.fetcher.get(url, &headers) else {
+            self.note_transport_failure();
+            return None;
+        };
         if status != 200 {
+            // A 404 for an unknown DOI is a normal miss, not an outage. Only a
+            // server-side or throttling status counts against the provider.
+            if status >= 500 || status == 429 {
+                self.note_transport_failure();
+            }
             return None;
         }
         if body.len() > self.max_response_bytes {
             return None;
         }
-        let text = String::from_utf8(body).ok()?;
-        let payload: Value = serde_json::from_str(&text).ok()?;
+        let Ok(text) = String::from_utf8(body) else {
+            return None;
+        };
+        let Ok(payload) = serde_json::from_str::<Value>(&text) else {
+            self.note_transport_failure();
+            return None;
+        };
         if payload.is_object() {
             Some(payload)
         } else {

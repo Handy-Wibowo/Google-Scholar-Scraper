@@ -4,6 +4,7 @@
 //! Contracts transcribed in docs/CONTRACTS.md (step 1).
 
 pub mod abstracts;
+pub mod cache;
 pub mod catalog;
 pub mod client;
 pub mod crossref;

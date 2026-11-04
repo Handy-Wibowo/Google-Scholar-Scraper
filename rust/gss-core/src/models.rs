@@ -241,6 +241,9 @@ pub struct ExtractionResult {
     pub duplicates_removed: i32,
     #[serde(default)]
     pub invalid_articles_removed: i32,
+    /// Of `duplicates_removed`, how many matched only by DOI (1.3).
+    #[serde(default)]
+    pub duplicates_by_doi: i32,
 }
 
 impl ExtractionResult {

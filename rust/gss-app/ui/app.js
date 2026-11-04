@@ -82,6 +82,17 @@ const ALL_COLUMNS = ["title", "authors", "index", "rank", "pdf", "link"];
 
 const $ = (id) => document.getElementById(id);
 
+// Commands reject with { code, message }; older paths may still hand back a
+// bare string, so both shapes are normalised here. The UI switches on `code`,
+// never on message text.
+function errCode(err) {
+  return err && typeof err === "object" && "code" in err ? String(err.code) : "";
+}
+function errMessage(err) {
+  if (err && typeof err === "object" && "message" in err) return String(err.message);
+  return String(err);
+}
+
 function joinPath(folder, filename) {
   if (!folder) return filename;
   return folder.endsWith("\\") || folder.endsWith("/") ? folder + filename : folder + "\\" + filename;
@@ -559,7 +570,7 @@ async function startSearch() {
     await invoke("search_scholar", request);
   } catch (err) {
     // Validation errors: inline status, no dialog (matches Python).
-    setStatus("Check search setup", String(err), "error");
+    setStatus("Check search setup", errMessage(err), "error");
     return;
   }
   storedArticles = [];
@@ -593,10 +604,10 @@ async function checkMetadataPdfs() {
     await invoke("check_metadata_pdfs");
   } catch (err) {
     finishOperation();
-    if (String(err).includes("NOTHING_TO_CHECK")) {
+    if (errCode(err) === "NOTHING_TO_CHECK") {
       setStatus("Nothing to check", "Run a search first, then check metadata and public PDFs.", "warning");
     } else {
-      taskError("check", String(err));
+      taskError("check", errMessage(err));
     }
   }
 }
@@ -629,10 +640,10 @@ async function importRanking() {
     await invoke("import_ranking", { path, defaultYear: year });
   } catch (err) {
     finishOperation();
-    if (String(err).startsWith("No file found")) {
-      setStatus("Check ranking file", String(err), "error");
+    if (errCode(err) === "NO_FILE_FOUND") {
+      setStatus("Check ranking file", errMessage(err), "error");
     } else {
-      taskError("import", String(err));
+      taskError("import", errMessage(err));
     }
   }
 }
@@ -654,7 +665,7 @@ async function downloadSelected() {
     await invoke("download_pdfs", { indices: [...selection], folder });
   } catch (err) {
     finishOperation();
-    taskError("download", String(err));
+    taskError("download", errMessage(err));
   }
 }
 
@@ -698,7 +709,7 @@ async function startCitationExport() {
     await invoke("export_citations", { articles: records, format: fmt, path });
   } catch (err) {
     finishOperation();
-    taskError("citations", String(err));
+    taskError("citations", errMessage(err));
   }
 }
 
@@ -727,7 +738,7 @@ async function exportSpreadsheet(kind) {
     setStatus("Ready", detail, "ready");
     rememberExportFolder(path);
   } catch (err) {
-    const msg = String(err).replace("Export failed: ", "");
+    const msg = errMessage(err).replace("Export failed: ", "");
     setStatus("Ready", `Export failed: ${msg}`, "error");
     showError("Export failed", msg);
   }
@@ -1053,8 +1064,10 @@ async function onWorkerMessage(msg) {
     // result_summary() L249-261: singular/plural, not "(s)".
     const resultWord = storedArticles.length === 1 ? "result" : "results";
     // Python appends the plural "s" to "removed" (L255/L259) — reproduced verbatim.
+    const byDoi = r.duplicatesByDoi ?? r.duplicates_by_doi ?? 0;
     summaryBase = `${storedArticles.length} ${resultWord} found | ${successful}/${requested} pages completed` +
       (duplicates ? ` | ${duplicates} duplicate removed${duplicates === 1 ? "" : "s"}` : "") +
+      (byDoi ? ` (${byDoi} matched by DOI)` : "") +
       (invalid ? ` | ${invalid} invalid record removed${invalid === 1 ? "" : "s"}` : "");
     const { from, to } = currentYearBounds();
     $("appliedYear").textContent = yearRangeLabel(from, to);
@@ -1338,6 +1351,11 @@ async function loadSettings() {
     return;
   }
   if (!saved) return;
+  // Commands now return { settings, notice }; a bare settings object is still
+  // accepted so an older backend keeps working.
+  const notice = saved.notice ?? "";
+  if (saved.settings) saved = saved.settings;
+  if (notice) setStatus("Settings reset", notice, "warning");
   $("query").value = saved.query ?? "";
   $("pages").value = saved.pages || "1";
   $("folder").value = saved.output_folder ?? "";
@@ -1368,6 +1386,17 @@ async function loadSettings() {
     $("queryHistory").appendChild(o);
   }
   if (saved.sort_key) { sortKey = saved.sort_key; sortDir = saved.sort_dir === -1 ? -1 : 1; }
+  // A catalog restored at startup means ranks are already available; the
+  // notice must say so instead of claiming nothing was imported.
+  try {
+    const restored = await invoke("load_catalog_records");
+    if (Array.isArray(restored) && restored.length > 0) {
+      rankingCount = restored.length;
+      $("rankingNotice").textContent = `${rankingCount} ranking records`;
+    }
+  } catch {
+    /* no catalog is a normal first run */
+  }
   onYearPresetChanged();
   renderResults();
   restoreResults();

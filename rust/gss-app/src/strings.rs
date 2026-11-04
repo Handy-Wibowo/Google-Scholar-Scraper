@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 pub const APP_TITLE: &str = "Google Scholar Scraper";
-pub const APP_VERSION: &str = "3.0.0";
+pub const APP_VERSION: &str = "3.3.1";
 
 pub const DEFAULT_EXCEL_FILENAME: &str = "scholar_articles.xlsx";
 pub const DEFAULT_CSV_FILENAME: &str = "scholar_articles.csv";

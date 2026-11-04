@@ -99,7 +99,7 @@ const COLUMN_ALIASES: [(&str, [&str; 7], usize); 6] = [
     ),
 ];
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct JournalRankRecord {
     pub title: String,
     pub title_key: String,
@@ -197,6 +197,37 @@ impl JournalCatalog {
         self.by_issn = by_issn;
         self.by_title = by_title;
         Ok(incoming.len())
+    }
+
+    /// Rebuild a catalog from previously exported records.
+    ///
+    /// The ISSN/title index maps are derived, so a restored catalog behaves
+    /// exactly like one produced by `import_file`. Records are taken as given:
+    /// they were validated on the way in.
+    pub fn from_records(records: Vec<JournalRankRecord>) -> Self {
+        let mut by_issn: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut by_title: HashMap<String, Vec<usize>> = HashMap::new();
+        for (index, record) in records.iter().enumerate() {
+            for issn in &record.issns {
+                by_issn.entry(issn.clone()).or_default().push(index);
+            }
+            if !record.title_key.is_empty() {
+                by_title
+                    .entry(record.title_key.clone())
+                    .or_default()
+                    .push(index);
+            }
+        }
+        Self {
+            records,
+            by_issn,
+            by_title,
+        }
+    }
+
+    /// Records in a form that survives a JSON round-trip.
+    pub fn to_records(&self) -> Vec<JournalRankRecord> {
+        self.records.clone()
     }
 
     pub fn clear(&mut self) {

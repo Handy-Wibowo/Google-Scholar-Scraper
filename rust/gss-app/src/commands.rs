@@ -3,6 +3,7 @@
 //! Excel/CSV exports run synchronously (UI-thread contract); citations run
 //! in a background task; worker exceptions become task_error messages.
 
+use crate::errors::CommandError;
 use crate::state::{self, AppState, Operation, WorkerMessage};
 use gss_core::client::{AtomicCancel, CancelEvent, HttpFetcher, ScholarClient};
 
@@ -12,6 +13,14 @@ use gss_core::models::ExtractionResult;
 use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
+
+/// Connect timeout shared by every outbound client. A dead host must fail
+/// fast rather than hold a worker thread hostage.
+const CONNECT_TIMEOUT_SECS: u64 = 10;
+/// Total budget for a Crossref JSON call.
+const CROSSREF_TIMEOUT_SECS: u64 = 30;
+/// Total budget for a PDF body; large files over slow links need this much.
+const PDF_TIMEOUT_SECS: u64 = 120;
 
 /// Real HTTP fetcher on top of reqwest (blocking, rustls, no system proxy —
 /// replicates `trust_env=False`).
@@ -90,6 +99,107 @@ fn clear_running(app: &AppHandle) {
     }
 }
 
+/// RAII latch guard for a worker thread.
+///
+/// The running latch used to be cleared by an explicit `clear_running` call on
+/// every terminal path. A panic on any of those paths (or an early `return`
+/// added later) left `is_running()` stuck at `Some(..)`, so every subsequent
+/// command answered "An operation is already running." until restart. Dropping
+/// this guard clears the latch unconditionally — panic, early return, or normal
+/// completion.
+struct LatchGuard {
+    app: AppHandle,
+    operation: &'static str,
+}
+
+impl LatchGuard {
+    fn new(app: &AppHandle, operation: &'static str) -> Self {
+        Self {
+            app: app.clone(),
+            operation,
+        }
+    }
+}
+
+impl Drop for LatchGuard {
+    fn drop(&mut self) {
+        clear_running(&self.app);
+        if crate::logging::take_panicking() {
+            crate::logging::error(
+                "worker_panic",
+                &format!("operation={} latch=cleared", self.operation),
+            );
+        }
+        crate::logging::info("operation_end", &format!("operation={}", self.operation));
+    }
+}
+
+/// `ArticleLookup` that consults the on-disk DOI cache before the network.
+///
+/// Wraps the normal HTTP lookup, so behaviour is identical except that a DOI
+/// seen in an earlier session costs no request. Title lookups are never cached
+/// (they are fuzzy evidence).
+struct CachedLookup<'a> {
+    inner: gss_core::crossref::HttpClientLookup<'a, 'a>,
+    cache: gss_core::cache::LookupCache,
+    dirty: bool,
+}
+
+impl<'a> CachedLookup<'a> {
+    fn new(
+        inner: gss_core::crossref::HttpClientLookup<'a, 'a>,
+        path: Option<std::path::PathBuf>,
+    ) -> Self {
+        let cache = match &path {
+            Some(p) => gss_core::cache::LookupCache::load(p),
+            None => gss_core::cache::LookupCache::new(),
+        };
+        Self {
+            inner,
+            cache,
+            dirty: false,
+        }
+    }
+
+    /// Provider-side failures observed by the underlying client.
+    fn transport_failures(&self) -> u32 {
+        self.inner.client.transport_failures()
+    }
+
+    fn flush(&self, path: Option<&std::path::PathBuf>) {
+        if !self.dirty {
+            return;
+        }
+        let Some(path) = path else { return };
+        if let Err(e) = self.cache.save(path) {
+            crate::logging::warn("cache_save_failed", &format!("error={e}"));
+        }
+    }
+}
+
+impl gss_core::crossref::ArticleLookup for CachedLookup<'_> {
+    fn lookup(&mut self, doi: &str) -> Option<gss_core::crossref::CrossrefRecord> {
+        if let Some(hit) = self.cache.get(doi) {
+            return hit;
+        }
+        let answer = self.inner.lookup(doi);
+        self.cache.insert(doi, answer.clone());
+        self.dirty = true;
+        answer
+    }
+
+    fn lookup_title_citations(
+        &mut self,
+        title: &str,
+        author: &str,
+        year: Option<i32>,
+        work_types: &'static [&'static str],
+    ) -> Option<gss_core::crossref::CrossrefRecord> {
+        self.inner
+            .lookup_title_citations(title, author, year, work_types)
+    }
+}
+
 /// Cancel view over `AppState` for core routines: observes both its own
 /// `AtomicCancel` (set by the wait loop) and the live UI cancel flag.
 struct AppCancelBridge {
@@ -144,9 +254,9 @@ pub fn search_scholar(
     output_folder: String,
     year_from: Option<i32>,
     year_to: Option<i32>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     if state.is_running() {
-        return Err("An operation is already running.".into());
+        return Err(CommandError::already_running());
     }
     let request = state::validate_search_inputs(
         &query,
@@ -164,6 +274,8 @@ pub fn search_scholar(
     let app_handle = app.clone();
     let catalog = state.catalog.lock().map(|c| c.clone()).unwrap_or_default();
     std::thread::spawn(move || {
+        let _latch = LatchGuard::new(&app_handle, "search");
+        crate::logging::info("operation_start", "op=search_scholar");
         let fetcher = ReqwestFetcher::new();
         let mut client = ScholarClient::new(Box::new(fetcher));
         let bridge = AppCancelBridge::new(cancel.clone(), app_handle.clone());
@@ -194,6 +306,7 @@ pub fn search_scholar(
                 )
             }));
             outcome.unwrap_or_else(|err| {
+                crate::logging::mark_panicking();
                 // Worker exceptions never surface tracebacks: synthetic result.
                 let class = err
                     .downcast_ref::<&str>()
@@ -210,6 +323,7 @@ pub fn search_scholar(
                     diagnostic: class,
                     duplicates_removed: 0,
                     invalid_articles_removed: 0,
+                    duplicates_by_doi: 0,
                 }
             })
         };
@@ -249,18 +363,20 @@ pub fn cancel_operation(state: State<'_, AppState>) {
 
 /// `check_metadata_pdfs` — metadata enrichment + PDF availability per record.
 #[tauri::command]
-pub fn check_metadata_pdfs(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+pub fn check_metadata_pdfs(app: AppHandle, state: State<'_, AppState>) -> Result<(), CommandError> {
     if state.is_running() {
-        return Err("An operation is already running.".into());
+        return Err(CommandError::already_running());
     }
     let articles = state.articles();
     if articles.is_empty() {
-        return Err("NOTHING_TO_CHECK".into());
+        return Err(CommandError::nothing_to_check());
     }
     let catalog = state.catalog.lock().map(|c| c.clone()).unwrap_or_default();
     state.set_running(Some(Operation::Check));
     let app_handle = app.clone();
     std::thread::spawn(move || {
+        let _latch = LatchGuard::new(&app_handle, "check");
+        crate::logging::info("operation_start", "op=check_metadata_pdfs");
         // run_check: enrich (real Crossref), then per-article PDF check.
         // A metadata failure keeps the originals and still runs the PDF pass;
         // a PDF failure keeps whatever enrichment already succeeded.
@@ -279,14 +395,16 @@ pub fn check_metadata_pdfs(app: AppHandle, state: State<'_, AppState>) -> Result
                 },
             );
         };
-        let enrich_error = String::new();
+        let mut enrich_error = String::new();
         let enriched: Vec<gss_core::models::Article> = {
             let mut transport = ReqwestCrossref::new();
             let mut client = gss_core::crossref::CrossrefClient::new(&mut transport);
-            let mut lookup = gss_core::crossref::HttpClientLookup {
+            let inner = gss_core::crossref::HttpClientLookup {
                 client: &mut client,
             };
-            gss_core::crossref::enrich_articles(
+            let cache_file = crate::settings::cache_path();
+            let mut lookup = CachedLookup::new(inner, cache_file.clone());
+            let out = gss_core::crossref::enrich_articles(
                 &articles,
                 Some(&catalog),
                 Some(&bridge),
@@ -295,7 +413,23 @@ pub fn check_metadata_pdfs(app: AppHandle, state: State<'_, AppState>) -> Result
                 None,
                 None,
                 true,
-            )
+            );
+            // Distinguish "nothing matched" from "the provider never answered":
+            // a Crossref outage used to look identical to a fully successful run.
+            lookup.flush(cache_file.as_ref());
+            // Read the counter through the adapter: it still holds the mutable
+            // borrow of `client`.
+            let failures = lookup.transport_failures();
+            if failures > 0 {
+                enrich_error = format!(
+                    "{failures} metadata lookup(s) could not be completed (Crossref transport or server error); affected records keep their original metadata."
+                );
+                crate::logging::warn(
+                    "enrich_partial_failure",
+                    &format!("failures={failures} records={}", articles.len()),
+                );
+            }
+            out
         };
 
         let mut results: Vec<gss_core::models::Article> = Vec::new();
@@ -382,6 +516,10 @@ impl ReqwestPdfFetcher {
                 .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
+                // Streaming PDF bodies need a generous total budget; without a
+                // timeout a stalled mirror hangs the worker thread forever.
+                .timeout(std::time::Duration::from_secs(PDF_TIMEOUT_SECS))
+                .connect_timeout(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS))
                 .build()
                 .expect("reqwest pdf client"),
         }
@@ -484,9 +622,9 @@ pub fn download_pdfs(
     state: State<'_, AppState>,
     indices: Vec<usize>,
     folder: String,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     if state.is_running() {
-        return Err("An operation is already running.".into());
+        return Err(CommandError::already_running());
     }
     let articles = state.articles();
     let selected: Vec<gss_core::models::Article> = indices
@@ -494,11 +632,13 @@ pub fn download_pdfs(
         .filter_map(|i| articles.get(*i).cloned())
         .collect();
     if selected.is_empty() {
-        return Err("NO_PAPERS_SELECTED".into());
+        return Err(CommandError::no_papers_selected());
     }
     state.set_running(Some(Operation::Download));
     let app_handle = app.clone();
     std::thread::spawn(move || {
+        let _latch = LatchGuard::new(&app_handle, "download");
+        crate::logging::info("operation_start", "op=download_pdfs");
         let resolver = gss_core::pdf::PublicResolver("93.184.216.34".to_string());
         let mut fetcher = ReqwestPdfFetcher::new();
         let total = selected.len();
@@ -550,18 +690,20 @@ pub fn import_ranking(
     state: State<'_, AppState>,
     path: String,
     default_year: Option<i32>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     if state.is_running() {
-        return Err("An operation is already running.".into());
+        return Err(CommandError::already_running());
     }
     if !Path::new(&path).is_file() {
-        return Err(format!("No file found at {path}."));
+        return Err(CommandError::no_file_found(&path));
     }
     // Staging clone: a rejected file leaves the loaded records untouched.
     let existing = state.catalog.lock().map(|c| c.clone()).unwrap_or_default();
     state.set_running(Some(Operation::Import));
     let app_handle = app.clone();
     std::thread::spawn(move || {
+        let _latch = LatchGuard::new(&app_handle, "import");
+        crate::logging::info("operation_start", "op=import_ranking");
         let name = Path::new(&path)
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -594,6 +736,10 @@ pub fn import_ranking(
                 if let Some(s) = app_handle.try_state::<AppState>() {
                     if let Ok(mut guard) = s.catalog.lock() {
                         *guard = staged.clone();
+                    }
+                    // 6.16: a relaunch must not require re-importing the file.
+                    if let Err(e) = crate::settings::save_catalog(&staged) {
+                        crate::logging::warn("catalog_persist_failed", &format!("error={e}"));
                     }
                     let current = s.articles();
                     if !current.is_empty() {
@@ -694,6 +840,10 @@ impl ReqwestCrossref {
             client: reqwest::blocking::Client::builder()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
+                // Crossref returns small JSON; a short budget keeps a slow
+                // provider from stalling a whole enrichment pass.
+                .timeout(std::time::Duration::from_secs(CROSSREF_TIMEOUT_SECS))
+                .connect_timeout(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS))
                 .build()
                 .expect("reqwest crossref client"),
         }
@@ -726,20 +876,25 @@ pub fn export_citations(
     articles: Vec<gss_core::models::Article>,
     format: String,
     path: String,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     if state.is_running() {
-        return Err("An operation is already running.".into());
+        return Err(CommandError::already_running());
     }
     if articles.is_empty() {
-        return Err("NO_RESULTS_TO_EXPORT".into());
+        return Err(CommandError::no_results_to_export());
     }
     let format = format.to_lowercase();
     if format != "bibtex" && format != "ris" {
-        return Err("Unsupported citation format.".into());
+        return Err(CommandError::new(
+            crate::errors::UNSUPPORTED_FORMAT,
+            "Unsupported citation format.",
+        ));
     }
     state.set_running(Some(Operation::Citations));
     let app_handle = app.clone();
     std::thread::spawn(move || {
+        let _latch = LatchGuard::new(&app_handle, "citations");
+        crate::logging::info("operation_start", "op=export_citations");
         let total = articles.len();
         let bridge = AppCancelBridge::new(Arc::new(AtomicCancel::new()), app_handle.clone());
         let progress_app = app_handle.clone();
@@ -758,9 +913,11 @@ pub fn export_citations(
         // unverified with their Scholar fields and a review note.
         let mut transport = ReqwestCrossref::new();
         let mut client = gss_core::crossref::CrossrefClient::new(&mut transport);
-        let mut lookup = gss_core::crossref::HttpClientLookup {
+        let inner = gss_core::crossref::HttpClientLookup {
             client: &mut client,
         };
+        let cache_file = crate::settings::cache_path();
+        let mut lookup = CachedLookup::new(inner, cache_file.clone());
         let records = gss_core::crossref::resolve_citations(
             &articles,
             Some(&bridge),
@@ -769,6 +926,7 @@ pub fn export_citations(
             None,
             None,
         );
+        lookup.flush(cache_file.as_ref());
         let cancelled = bridge.is_set();
         if cancelled {
             // Cancelled → return WITHOUT writing the file.
@@ -832,8 +990,14 @@ pub fn export_citations(
 
 /// Saved window settings (UI defaults when nothing is stored yet).
 #[tauri::command]
-pub fn load_settings() -> crate::settings::UiSettings {
-    crate::settings::load()
+pub fn load_settings() -> crate::settings::LoadOutcome {
+    crate::settings::load_with_notice()
+}
+
+/// Records from the last successful ranking import, restored at startup.
+#[tauri::command]
+pub fn load_catalog_records() -> Vec<gss_core::catalog::JournalRankRecord> {
+    crate::settings::load_catalog().to_records()
 }
 
 /// Persist window settings; the UI ignores failures (session keeps working).
@@ -930,14 +1094,14 @@ pub fn export_excel(
     state: State<'_, AppState>,
     articles: Vec<gss_core::models::Article>,
     path: String,
-) -> Result<String, String> {
+) -> Result<String, CommandError> {
     let _ = state;
     if articles.is_empty() {
-        return Err("NO_RESULTS_TO_EXPORT".into());
+        return Err(CommandError::no_results_to_export());
     }
     gss_core::exporters::save_to_excel(&articles, Path::new(&path))
         .map(|_| format!("Exported {} result(s) to {path}.", articles.len()))
-        .map_err(|e| format!("Export failed: {e}"))
+        .map_err(CommandError::export_failed)
 }
 
 /// `export_csv` — synchronous on the UI thread.
@@ -946,19 +1110,19 @@ pub fn export_csv(
     state: State<'_, AppState>,
     articles: Vec<gss_core::models::Article>,
     path: String,
-) -> Result<String, String> {
+) -> Result<String, CommandError> {
     let _ = state;
     if articles.is_empty() {
-        return Err("NO_RESULTS_TO_EXPORT".into());
+        return Err(CommandError::no_results_to_export());
     }
     gss_core::exporters::save_to_csv(&articles, Path::new(&path))
         .map(|_| format!("Exported {} result(s) to {path}.", articles.len()))
-        .map_err(|e| format!("Export failed: {e}"))
+        .map_err(CommandError::export_failed)
 }
 
 /// File/dir picker for the frontend (import/download/browse paths).
 #[tauri::command]
-pub fn pick_path(kind: String, title: String) -> Result<String, String> {
+pub fn pick_path(kind: String, title: String) -> Result<String, CommandError> {
     use rfd::FileDialog;
     match kind.as_str() {
         "open" => Ok(FileDialog::new()
@@ -977,7 +1141,10 @@ pub fn pick_path(kind: String, title: String) -> Result<String, String> {
             .pick_folder()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default()),
-        _ => Err(format!("unknown dialog kind {kind}")),
+        _ => Err(CommandError::new(
+            crate::errors::INVALID_ARGUMENT,
+            format!("unknown dialog kind {kind}"),
+        )),
     }
 }
 
@@ -1133,5 +1300,53 @@ Machine learning,0885-6125,Q1,2023,Artificial Intelligence,https://scimagojr.exa
         }];
         apply_catalog_ranks(&mut articles, &catalog);
         assert_eq!(articles[0].sjr_quartile, "Q1");
+    }
+}
+
+#[cfg(test)]
+mod latch_tests {
+    use crate::logging;
+    use crate::state::{AppState, Operation};
+
+    /// The latch guard is what stops a worker panic from bricking the app.
+    ///
+    /// Before it existed, every terminal path cleared the latch by hand; a panic
+    /// (or a newly added early `return`) skipped that call, leaving
+    /// `is_running()` at `Some(..)` so every later command answered "An
+    /// operation is already running." until restart. This test drives the same
+    /// transition the guard performs and asserts the state is reachable again.
+    #[test]
+    fn a_cleared_latch_admits_the_next_operation() {
+        let state = AppState::new();
+        assert!(!state.is_running());
+
+        state.set_running(Some(Operation::Check));
+        assert!(state.is_running());
+
+        // What LatchGuard::drop does, unconditionally.
+        state.set_running(None);
+        assert!(!state.is_running());
+
+        // And the next operation is admitted.
+        state.set_running(Some(Operation::Search));
+        assert!(state.is_running());
+    }
+
+    /// A panic must be recorded as such, so the log distinguishes "worker died"
+    /// from "worker finished".
+    #[test]
+    fn panic_flag_is_consumed_once() {
+        logging::mark_panicking();
+        assert!(logging::take_panicking(), "flag must be set");
+        assert!(!logging::take_panicking(), "flag must clear after reading");
+    }
+
+    /// Logging must never be a correctness dependency: it is best-effort and
+    /// must survive a hostile environment.
+    #[test]
+    fn logging_survives_without_a_writable_profile() {
+        logging::info("test", "k=v");
+        logging::warn("test", "");
+        logging::error("test", "code=X");
     }
 }

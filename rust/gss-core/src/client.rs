@@ -254,6 +254,7 @@ fn cancelled_result(
         diagnostic: String::new(),
         duplicates_removed,
         invalid_articles_removed,
+        duplicates_by_doi: deduped.duplicates_by_doi,
     }
 }
 
@@ -292,6 +293,7 @@ fn with_partial_if_needed(
             diagnostic: result.status.as_str().to_string(),
             duplicates_removed: duplicate_count,
             invalid_articles_removed: invalid_count,
+            duplicates_by_doi: deduped.duplicates_by_doi,
         };
     }
 
@@ -305,6 +307,9 @@ fn with_partial_if_needed(
         diagnostic: result.diagnostic,
         duplicates_removed,
         invalid_articles_removed,
+        // The empty-articles branch above performs no dedupe, so nothing can
+        // have matched by DOI here.
+        duplicates_by_doi: 0,
     }
 }
 
@@ -399,6 +404,7 @@ pub fn scrape_scholar(
                             diagnostic: page_result.diagnostic,
                             duplicates_removed: 0,
                             invalid_articles_removed: 0,
+                            duplicates_by_doi: 0,
                         },
                         articles,
                         num_pages,
@@ -470,6 +476,7 @@ pub fn scrape_scholar(
             diagnostic: String::new(),
             duplicates_removed,
             invalid_articles_removed,
+            duplicates_by_doi: 0,
         };
     }
 
@@ -493,6 +500,7 @@ pub fn scrape_scholar(
         diagnostic: String::new(),
         duplicates_removed,
         invalid_articles_removed,
+        duplicates_by_doi: 0,
     }
 }
 
@@ -552,6 +560,7 @@ fn fetch_with_retries(
                     diagnostic,
                     duplicates_removed: 0,
                     invalid_articles_removed: 0,
+                    duplicates_by_doi: 0,
                 }));
             }
             Ok(response) => {
@@ -579,5 +588,6 @@ fn fetch_with_retries(
         diagnostic: last_error,
         duplicates_removed: 0,
         invalid_articles_removed: 0,
+        duplicates_by_doi: 0,
     }))
 }

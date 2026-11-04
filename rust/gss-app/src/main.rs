@@ -9,6 +9,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod errors;
+mod logging;
 mod settings;
 mod state;
 mod strings;
@@ -30,8 +32,19 @@ fn main() {
         return;
     }
 
+    logging::install_panic_hook();
+    logging::info("app_start", &format!("version={}", strings::APP_VERSION));
+
     tauri::Builder::default()
-        .manage(state::AppState::new())
+        .manage({
+            // Restore the imported catalog before the window opens so ranks are
+            // applied to a restored session without re-importing (6.16).
+            let st = state::AppState::new();
+            if let Ok(mut guard) = st.catalog.lock() {
+                *guard = settings::load_catalog();
+            }
+            st
+        })
         .invoke_handler(tauri::generate_handler![
             commands::search_scholar,
             commands::check_metadata_pdfs,
@@ -43,6 +56,7 @@ fn main() {
             commands::cancel_operation,
             commands::pick_path,
             commands::load_settings,
+            commands::load_catalog_records,
             commands::save_settings,
             commands::save_results,
             commands::load_results,

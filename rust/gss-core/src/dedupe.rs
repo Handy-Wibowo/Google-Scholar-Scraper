@@ -16,6 +16,9 @@ pub struct DeduplicationResult {
     pub articles: Vec<Article>,
     pub duplicates_removed: i32,
     pub invalid_removed: i32,
+    /// How many of `duplicates_removed` were matched by DOI alone — i.e. the
+    /// link and title differed but the paper was provably the same work.
+    pub duplicates_by_doi: i32,
 }
 
 /// Whitespace-collapsed, trimmed display text (`normalize_display_text`).
@@ -102,6 +105,11 @@ fn comparison_text_key(value: &str) -> String {
     normalize_display_text(&normalized).casefold()
 }
 
+/// Normalized DOI, or empty when the record has none (`normalize_doi`).
+pub fn doi_key(article: &Article) -> String {
+    crate::text::normalize_doi(&article.doi)
+}
+
 pub fn title_key(article: &Article) -> String {
     comparison_text_key(&article.title)
 }
@@ -126,8 +134,10 @@ pub fn deduplicate_articles<I: IntoIterator<Item = Article>>(articles: I) -> Ded
     let mut deduped: Vec<Article> = Vec::new();
     let mut link_to_index: HashMap<String, usize> = HashMap::new();
     let mut title_to_index: HashMap<String, usize> = HashMap::new();
+    let mut doi_to_index: HashMap<String, usize> = HashMap::new();
     let mut duplicates_removed = 0;
     let mut invalid_removed = 0;
+    let mut duplicates_by_doi = 0;
 
     for article in articles {
         let normalized = normalize_article(&article);
@@ -138,7 +148,21 @@ pub fn deduplicate_articles<I: IntoIterator<Item = Article>>(articles: I) -> Ded
 
         let link = canonical_link(&normalized);
         let title = title_key(&normalized);
-        let existing_index = find_existing_index(&link, &title, &link_to_index, &title_to_index);
+        let doi = doi_key(&normalized);
+        // DOI is the most specific identity: publisher page and repository copy
+        // share it even when link and title differ. Matching by link/title first
+        // would still collapse those, but only DOI tells us it was provable.
+        let by_link_or_title = find_existing_index(&link, &title, &link_to_index, &title_to_index);
+        let existing_index = by_link_or_title.or_else(|| {
+            if doi.is_empty() {
+                None
+            } else {
+                doi_to_index.get(&doi).copied()
+            }
+        });
+        if by_link_or_title.is_none() && existing_index.is_some() {
+            duplicates_by_doi += 1;
+        }
 
         let Some(existing_index) = existing_index else {
             let index = deduped.len();
@@ -148,6 +172,9 @@ pub fn deduplicate_articles<I: IntoIterator<Item = Article>>(articles: I) -> Ded
             }
             if !title.is_empty() {
                 title_to_index.insert(title, index);
+            }
+            if !doi.is_empty() {
+                doi_to_index.insert(doi, index);
             }
             continue;
         };
@@ -164,12 +191,17 @@ pub fn deduplicate_articles<I: IntoIterator<Item = Article>>(articles: I) -> Ded
         if !merged_title.is_empty() {
             title_to_index.insert(merged_title, existing_index);
         }
+        let merged_doi = doi_key(&deduped[existing_index]);
+        if !merged_doi.is_empty() {
+            doi_to_index.insert(merged_doi, existing_index);
+        }
     }
 
     DeduplicationResult {
         articles: deduped,
         duplicates_removed,
         invalid_removed,
+        duplicates_by_doi,
     }
 }
 

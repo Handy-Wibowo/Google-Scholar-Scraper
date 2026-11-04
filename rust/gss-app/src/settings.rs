@@ -33,7 +33,13 @@ pub struct UiSettings {
     pub hidden_columns: Vec<String>,
     /// Most recent successful queries, newest first (cap 20).
     pub query_history: Vec<String>,
+    /// Settings layout version. Bumped only on an incompatible change; a file
+    /// with a different value is replaced by defaults and the caller is told.
+    pub schema_version: u32,
 }
+
+/// Current settings layout version.
+pub const SCHEMA_VERSION: u32 = 1;
 
 impl Default for UiSettings {
     fn default() -> Self {
@@ -53,6 +59,7 @@ impl Default for UiSettings {
             compact_rows: false,
             hidden_columns: Vec::new(),
             query_history: Vec::new(),
+            schema_version: SCHEMA_VERSION,
         }
     }
 }
@@ -66,15 +73,50 @@ pub fn settings_path() -> Option<PathBuf> {
     Some(PathBuf::from(base).join(APP_DIR).join(FILE_NAME))
 }
 
-/// Saved settings, or the defaults when nothing usable is on disk.
-pub fn load() -> UiSettings {
+/// What a settings load produced, and why (for a user-visible notice).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct LoadOutcome {
+    pub settings: UiSettings,
+    /// Empty on a clean load; otherwise a short explanation of the reset.
+    pub notice: String,
+}
+
+/// Load settings and report whether anything had to be discarded.
+///
+/// A corrupt file used to be swallowed silently with total loss and no
+/// explanation; the notice lets the UI say the window reset its setup.
+pub fn load_with_notice() -> LoadOutcome {
+    let default = UiSettings::default();
     let Some(path) = settings_path() else {
-        return UiSettings::default();
+        return LoadOutcome {
+            settings: default,
+            notice: String::new(),
+        };
     };
     let Ok(bytes) = std::fs::read(&path) else {
-        return UiSettings::default();
+        // Missing file is normal on first run: no notice.
+        return LoadOutcome {
+            settings: default,
+            notice: String::new(),
+        };
     };
-    serde_json::from_slice(&bytes).unwrap_or_default()
+    match serde_json::from_slice::<UiSettings>(&bytes) {
+        Ok(settings) if settings.schema_version == SCHEMA_VERSION => LoadOutcome {
+            settings,
+            notice: String::new(),
+        },
+        Ok(found) => LoadOutcome {
+            settings: default,
+            notice: format!(
+                "Your saved window settings were from an older layout (version {}); the setup was reset.",
+                found.schema_version
+            ),
+        },
+        Err(_) => LoadOutcome {
+            settings: default,
+            notice: "Your saved window settings could not be read and were reset.".to_string(),
+        },
+    }
 }
 
 /// Write the settings atomically (`.tmp` then rename). Errors are returned for
@@ -91,6 +133,50 @@ pub fn save(settings: &UiSettings) -> Result<(), String> {
     std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+const CATALOG_FILE: &str = "catalog.json";
+
+/// `%APPDATA%\<identifier>\catalog.json`: the imported ranking records.
+pub fn catalog_path() -> Option<PathBuf> {
+    settings_path().map(|p| p.with_file_name(CATALOG_FILE))
+}
+
+/// Persist the imported catalog so a relaunch does not require re-importing.
+pub fn save_catalog(catalog: &gss_core::catalog::JournalCatalog) -> Result<(), String> {
+    let Some(path) = catalog_path() else {
+        return Err("APPDATA is not set.".to_string());
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let bytes = serde_json::to_vec(&catalog.to_records()).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Records from the last successful import; empty when absent or corrupt.
+pub fn load_catalog() -> gss_core::catalog::JournalCatalog {
+    let Some(path) = catalog_path() else {
+        return gss_core::catalog::JournalCatalog::new();
+    };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return gss_core::catalog::JournalCatalog::new();
+    };
+    let Ok(records) = serde_json::from_slice::<Vec<gss_core::catalog::JournalRankRecord>>(&bytes)
+    else {
+        return gss_core::catalog::JournalCatalog::new();
+    };
+    gss_core::catalog::JournalCatalog::from_records(records)
+}
+
+const CACHE_FILE: &str = "crossref-cache.json";
+
+/// DOI lookup cache shared by enrichment and citation resolution (1.2).
+pub fn cache_path() -> Option<PathBuf> {
+    settings_path().map(|p| p.with_file_name(CACHE_FILE))
 }
 
 const RESULTS_FILE: &str = "last-results.json";
@@ -166,6 +252,7 @@ mod tests {
             compact_rows: true,
             hidden_columns: vec!["authors".into(), "link".into()],
             query_history: vec!["machine learning".into(), "graph neural networks".into()],
+            schema_version: SCHEMA_VERSION,
         }
     }
 
