@@ -1,5 +1,37 @@
 # Changelog
 
+## 4.0.2
+
+Normal release of the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+published at the
+[v4.0.2 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v4.0.2).
+
+Bug-fix release for defects in the v4.0.0 discovery feature. All four share one
+root cause: a restored session lives in the UI, but the new commands assumed it
+lived in the backend.
+
+### Fixed
+
+- **Pasted DOIs vanished after being added.** The command reported success and the
+  table stayed empty, because it merged into backend state that a restored session
+  never populates, then the UI re-read the on-disk sidecar that had never been
+  written. It now takes the caller's in-memory set, returns the merged result, and
+  persists it.
+- **Adding records destroyed earlier ones.** Merging against an empty backend set
+  wrote a one-record sidecar over the existing file. Verified lossless: two
+  existing records plus a new DOI now yield three, on disk as well as in the UI.
+- **Citation chasing had the same defect** in `review_append`.
+- **Pasted DOIs showed a fabricated `(pasted DOI) …` title.** Crossref's metadata
+  record carries no title, so the DOI itself is now the label — a prefix would also
+  have polluted title-based review keys.
+
+### Added
+
+- A restored session whose persisted decision/tag filter hides every row now says
+  so ("restored, none match the active filter") instead of showing an empty table
+  that looks like a failed restore.
+
 ## 4.0.1
 
 Normal release of the

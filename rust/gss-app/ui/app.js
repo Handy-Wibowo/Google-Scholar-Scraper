@@ -1883,10 +1883,12 @@ async function addPastedDois() {
   const text = $("pasteDois").value;
   $("pasteDialog").close();
   try {
-    const added = await invoke("discovery_add_dois", { text });
-    const restored = await invoke("load_results").catch(() => []);
-    if (Array.isArray(restored) && restored.length) storedArticles = restored;
+    const before = storedArticles.length;
+    const merged = await invoke("discovery_add_dois", { text, current: storedArticles });
+    if (Array.isArray(merged)) storedArticles = merged;
     renderResults();
+    saveResultsSoon();
+    const added = Math.max(0, storedArticles.length - before);
     setStatus("Records added", `${added} new record(s) resolved from pasted DOIs.`, "success");
   } catch (err) {
     showError("Could not add records", errMessage(err));
@@ -1909,11 +1911,13 @@ async function citationChase(direction) {
       return;
     }
     // Offer the discovery as an import rather than replacing the current set.
-    const merged = await invoke("review_append", { articles: found });
-    const restored = await invoke("load_results").catch(() => []);
-    if (Array.isArray(restored) && restored.length) storedArticles = restored;
+    const before = storedArticles.length;
+    const merged = await invoke("review_append", { articles: found, current: storedArticles });
+    if (Array.isArray(merged)) storedArticles = merged;
     renderResults();
-    setStatus("Citations chased", `Added ${merged} record(s) from ${direction}.`, "success");
+    saveResultsSoon();
+    const added = Math.max(0, storedArticles.length - before);
+    setStatus("Citations chased", `Added ${added} record(s) from ${direction}.`, "success");
   } catch (err) {
     showError("Citation chasing failed", errMessage(err));
   }
@@ -2160,6 +2164,16 @@ async function restoreResults() {
   storedArticles = articles;
   summaryBase = `${articles.length} ${word} restored from the last session`;
   renderResults();
+  // A persisted decision/tag filter can hide every restored row; say why rather
+  // than showing an empty table that looks like a failed restore.
+  const shown = document.querySelectorAll("#tableBody tr").length;
+  if (shown === 0) {
+    setStatus(
+      "Restored, but filtered out",
+      `${articles.length} ${word} restored, none match the active filter. Use Clear filters.`,
+      "warning",
+    );
+  }
 }
 
 let resultsTimer = null;

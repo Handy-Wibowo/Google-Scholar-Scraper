@@ -1160,10 +1160,16 @@ pub fn export_excel(
 
 /// Add records by pasting DOIs (1.7): resolve each through Crossref and append.
 ///
-/// Unresolvable DOIs are skipped rather than failing the whole paste, and the
-/// caller gets a count so it can report what actually landed.
+/// Unresolvable DOIs are skipped rather than failing the whole paste.
+/// Restored sessions live in the UI (`storedArticles`), never in `AppState`, so
+/// the caller passes its in-memory set — merging only `state.articles()` would
+/// drop every restored row.
 #[tauri::command]
-pub fn discovery_add_dois(state: State<'_, AppState>, text: String) -> Result<usize, CommandError> {
+pub fn discovery_add_dois(
+    state: State<'_, AppState>,
+    text: String,
+    current: Option<Vec<gss_core::models::Article>>,
+) -> Result<Vec<gss_core::models::Article>, CommandError> {
     let dois = gss_core::discovery::parse_pasted_dois(&text);
     if dois.is_empty() {
         return Err(CommandError::new(
@@ -1187,8 +1193,11 @@ pub fn discovery_add_dois(state: State<'_, AppState>, text: String) -> Result<us
         let journal = record.journal.clone();
         let issns = record.issns.clone();
         let year = record.year;
+        // CrossrefRecord carries no title (it is a metadata sidecar), so the
+        // DOI itself is the honest label — a fabricated prefix would also
+        // pollute title-based review keys.
         found.push(gss_core::models::Article {
-            title: format!("(pasted DOI) {doi}"),
+            title: doi.clone(),
             journal,
             issns,
             publication_year: year,
@@ -1205,13 +1214,14 @@ pub fn discovery_add_dois(state: State<'_, AppState>, text: String) -> Result<us
             format!("None of the {} pasted DOI(s) resolved.", dois.len()),
         ));
     }
-    let mut combined = state.articles();
-    let before = combined.len();
+    let mut combined = current.unwrap_or_else(|| state.articles());
     combined.extend(found);
-    let deduped = gss_core::dedupe::deduplicate_articles(combined);
-    let total = deduped.articles.len();
-    state.set_articles(deduped.articles);
-    Ok(total.saturating_sub(before))
+    let merged = gss_core::dedupe::deduplicate_articles(combined).articles;
+    state.set_articles(merged.clone());
+    // Persist: the UI renders from this sidecar, so a discovery that never
+    // reaches disk is invisible after the next refresh.
+    let _ = crate::settings::save_results(&merged);
+    Ok(merged)
 }
 
 /// Citation chasing (4.1): records citing, or cited by, the given DOI.
@@ -1468,13 +1478,14 @@ pub fn review_save_baseline(state: State<'_, AppState>, name: String) -> Result<
 pub fn review_append(
     state: State<'_, AppState>,
     articles: Vec<gss_core::models::Article>,
-) -> usize {
-    let mut combined = state.articles();
-    let before = combined.len();
+    current: Option<Vec<gss_core::models::Article>>,
+) -> Vec<gss_core::models::Article> {
+    let mut combined = current.unwrap_or_else(|| state.articles());
     combined.extend(articles);
-    let deduped = gss_core::dedupe::deduplicate_articles(combined);
-    state.set_articles(deduped.articles.clone());
-    deduped.articles.len().saturating_sub(before)
+    let merged = gss_core::dedupe::deduplicate_articles(combined).articles;
+    state.set_articles(merged.clone());
+    let _ = crate::settings::save_results(&merged);
+    merged
 }
 
 /// Round-trip: read back a CSV/JSON the app itself exported.
