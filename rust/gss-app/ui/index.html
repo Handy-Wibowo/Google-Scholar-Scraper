@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Google Scholar Scraper v4.1.0</title>
+  <title>Google Scholar Scraper v4.1.1</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -12,7 +12,7 @@
     <nav class="sidebar" aria-label="Library">
       <div class="brand">
         <span class="brand-name">Scholar Scraper</span>
-        <span class="brand-version">v4.1.0</span>
+        <span class="brand-version">v4.1.1</span>
       </div>
 
       <div class="side-label">Library</div>
@@ -73,6 +73,10 @@
 
       <div class="spacer"></div>
       <div class="sidebar-footer">
+        <button class="nav-item" id="btnGuide" title="Open the guide">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.2a2.5 2.5 0 1 1 3.2 2.4c-.6.2-.9.7-.9 1.3v.4"/><path d="M12 16.4v.01"/></svg>
+          <span class="nav-label">Guide</span>
+        </button>
         <button class="nav-item" id="btnSettings" title="Settings">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6l1.4 1.4m10 10 1.4 1.4m0-12.8-1.4 1.4m-10 10L5.6 18.4"/></svg>
           <span class="nav-label">Settings</span>
@@ -173,16 +177,43 @@
                 <th scope="col" class="select-cell">
                   <input type="checkbox" id="selectVisible" aria-label="Select all visible papers" />
                 </th>
-                <th class="sortable" data-key="title" scope="col" aria-sort="none" title="Sort by title">Title</th>
-                <th class="sortable" data-key="authors" scope="col" aria-sort="none" title="Sort by authors">Authors</th>
-                <th class="sortable" data-key="decision" scope="col" aria-sort="none" title="Your screening decision">Decision</th>
-                <th class="sortable" data-key="pdf" scope="col" aria-sort="none" title="Sort by public-PDF status">PDF</th>
-                <th class="sortable" data-key="index" scope="col" aria-sort="none" title="Sort by journal indexing (SJR, SINTA, SCOPUS)">Index</th>
-                <th class="sortable" data-key="rank" scope="col" aria-sort="none" title="Sort by journal rank">Rank</th>
-                <th class="sortable" data-key="cited" scope="col" aria-sort="none" title="Sort by citation count (Crossref / OpenAlex)">Cited</th>
-                <th class="sortable" data-key="oa" scope="col" aria-sort="none" title="Open-access status reported by OpenAlex">OA</th>
-                <th class="sortable" data-key="tags" scope="col" aria-sort="none" title="Tags you assigned">Tags</th>
-                <th class="sortable" data-key="link" scope="col" aria-sort="none" title="Sort by link presence">Link</th>
+                <th class="sortable" data-key="title" scope="col" aria-sort="none">
+                  <span class="th-label" title="Sort by title">Title</span>
+                </th>
+                <th class="sortable" data-key="authors" scope="col" aria-sort="none">
+                  <span class="th-label" title="Sort by authors">Authors</span>
+                </th>
+                <th class="sortable" data-key="decision" scope="col" aria-sort="none">
+                  <span class="th-label" title="Sort by your screening decision">Decision</span>
+                  <button class="th-help" data-help="decision" aria-label="What does Decision mean?">?</button>
+                </th>
+                <th class="sortable" data-key="pdf" scope="col" aria-sort="none">
+                  <span class="th-label" title="Sort by public-PDF status">PDF</span>
+                  <button class="th-help" data-help="pdf" aria-label="What does the PDF column mean?">?</button>
+                </th>
+                <th class="sortable" data-key="index" scope="col" aria-sort="none">
+                  <span class="th-label" title="Sort by journal indexing">Index</span>
+                  <button class="th-help" data-help="index" aria-label="What does Index mean?">?</button>
+                </th>
+                <th class="sortable" data-key="rank" scope="col" aria-sort="none">
+                  <span class="th-label" title="Sort by journal rank">Rank</span>
+                  <button class="th-help" data-help="rank" aria-label="What does Rank mean?">?</button>
+                </th>
+                <th class="sortable" data-key="cited" scope="col" aria-sort="none">
+                  <span class="th-label" title="Sort by citation count">Cited</span>
+                  <button class="th-help" data-help="cited" aria-label="What does Cited mean?">?</button>
+                </th>
+                <th class="sortable" data-key="oa" scope="col" aria-sort="none">
+                  <span class="th-label" title="Sort by open-access status">OA</span>
+                  <button class="th-help" data-help="oa" aria-label="What does OA mean?">?</button>
+                </th>
+                <th class="sortable" data-key="tags" scope="col" aria-sort="none">
+                  <span class="th-label" title="Sort by tags">Tags</span>
+                  <button class="th-help" data-help="tags" aria-label="What are tags?">?</button>
+                </th>
+                <th class="sortable" data-key="link" scope="col" aria-sort="none">
+                  <span class="th-label" title="Sort by link presence">Link</span>
+                </th>
               </tr>
             </thead>
             <tbody id="tableBody" role="rowgroup"></tbody>
@@ -299,6 +330,8 @@
   </div>
 
   <!-- ---------- filters popover ---------- -->
+  <div class="help-bubble" id="helpBubble" role="tooltip" hidden></div>
+
   <div class="popover" id="filtersPopover" role="dialog" aria-label="Result filters" hidden>
     <div class="pop-fields">
       <div class="field">
@@ -470,6 +503,95 @@
     <pre class="report" id="errorDetail"></pre>
     <div class="dialog-actions">
       <button id="btnErrorClose" class="primary">OK</button>
+    </div>
+  </dialog>
+
+  <dialog id="guideDialog" class="guide-dialog">
+    <h3>How to use this app</h3>
+    <p class="dialog-sub">Search Scholar, screen the results, then export what you keep.</p>
+    <div class="guide-body">
+      <section id="guide-start">
+        <h4>First run</h4>
+        <ol>
+          <li>Type a query and press <kbd>Enter</kbd>. Pages defaults to 1; "Search options" has pages, year range, and relevance ranking.</li>
+          <li>Results appear with an <strong>Unknown</strong> PDF status. That is expected — nothing has been verified yet.</li>
+          <li>Optional: run <strong>Actions → Check metadata + PDFs</strong> to fill in DOI, journal ranks, citations, open-access status, and public-PDF availability. It contacts Crossref and OpenAlex, so it is slower than a search.</li>
+          <li>Screen papers with <strong>Include</strong> / <strong>Maybe</strong> / <strong>Exclude</strong>, then export.</li>
+        </ol>
+      </section>
+
+      <section id="guide-screening">
+        <h4>Screening papers</h4>
+        <ul>
+          <li>Click a row to open the <strong>inspector</strong> on the right: metadata, notes, tags, exclusion reason, and the abstract.</li>
+          <li>Use the row checkboxes (or <kbd>Ctrl</kbd>+click, or <kbd>Shift</kbd>+click for a range) to act on many rows at once.</li>
+          <li>Decisions are saved per DOI, or per title when there is no DOI, so they survive a new search or a restart.</li>
+          <li>Unsaved inspector edits are never thrown away silently — you are asked before switching papers.</li>
+        </ul>
+      </section>
+
+      <section id="guide-columns">
+        <h4>What the columns mean</h4>
+        <p class="notice">Only Title, Authors, and Link come from Google Scholar. Everything else is enrichment or your own screening.</p>
+        <dl class="guide-list">
+          <dt>Decision</dt><dd>Your screening verdict: undecided (blank), include, maybe, or exclude with a coded reason.</dd>
+          <dt>PDF</dt><dd>Whether <em>this app</em> found a downloadable public PDF. "Unknown" means not checked yet. Distinct from open access.</dd>
+          <dt>Index</dt><dd>Indexing services listing the journal (SJR, SINTA, SCOPUS, DOAJ), from the ranking file you imported.</dd>
+          <dt>Rank</dt><dd>SJR quartile / SINTA rank of the journal. Describes the journal, never the paper.</dd>
+          <dt>Cited</dt><dd>Citation count from Crossref or OpenAlex. A real <code>0</code> differs from blank (not checked).</dd>
+          <dt>OA</dt><dd>Open-access status from OpenAlex: gold, green, bronze, hybrid, closed. "Closed" means OpenAlex knows of no open version.</dd>
+          <dt>Tags</dt><dd>Your own labels for grouping papers by theme or method.</dd>
+        </dl>
+        <p class="notice">Hover or focus the <strong>?</strong> beside a column header for the same explanation in place.</p>
+      </section>
+
+      <section id="guide-export">
+        <h4>Exporting</h4>
+        <ul>
+          <li><strong>Export</strong> opens one dialog: choose a format, then choose which papers — filtered rows, selected rows, or everything collected. The counts update as you change scope.</li>
+          <li>CSV and BibTeX/RIS keep the fixed column/key contract of the original Python implementation, so downstream scripts keep working.</li>
+          <li>Excel adds formatting, freeze panes, and grouped sheets; other formats cover JSON, Markdown, TSV, EndNote, CSL-JSON, and a reading list.</li>
+          <li>Exports are written together with a temporary file and then renamed, so an interrupted write cannot leave a half file.</li>
+        </ul>
+      </section>
+
+      <section id="guide-review">
+        <h4>Systematic review tools</h4>
+        <ul>
+          <li><strong>PRISMA counts</strong> summarises identified / screened / included / excluded.</li>
+          <li><strong>Screening log</strong> exports every decision with its reason, tags, note, and timestamp.</li>
+          <li><strong>Near-duplicate report</strong> finds likely duplicate records above a similarity threshold.</li>
+          <li><strong>Baselines</strong> snapshot a search so a later search can be diffed against it.</li>
+          <li><strong>Add papers</strong> imports your own CSV/JSON export, or resolves pasted DOIs through Crossref.</li>
+        </ul>
+      </section>
+
+      <section id="guide-shortcuts">
+        <h4>Keyboard</h4>
+        <dl class="guide-list">
+          <dt><kbd>Enter</kbd> in the query box</dt><dd>Start a search.</dd>
+          <dt><kbd>Arrow</kbd> keys in the table</dt><dd>Move between rows; <kbd>Home</kbd>/<kbd>End</kbd> jump to the ends.</dd>
+          <dt><kbd>Space</kbd></dt><dd>Toggle selection on the focused row.</dd>
+          <dt><kbd>Shift</kbd>+<kbd>Arrow</kbd></dt><dd>Extend the selection.</dd>
+          <dt><kbd>Enter</kbd> on a row</dt><dd>Open the inspector.</dd>
+          <dt><kbd>Ctrl</kbd>+<kbd>A</kbd></dt><dd>Select every visible row.</dd>
+          <dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd></dt><dd>Clear the selection.</dd>
+          <dt><kbd>Ctrl</kbd>+<kbd>E</kbd></dt><dd>Open the export dialog on BibTeX.</dd>
+          <dt><kbd>Esc</kbd></dt><dd>Close a popover, then the inspector, then cancel a running operation.</dd>
+        </dl>
+      </section>
+
+      <section id="guide-limits">
+        <h4>Limits and honesty</h4>
+        <ul>
+          <li>Google Scholar rate-limits and blocks automated access. When that happens the app says so and keeps what it already collected; it does not bypass CAPTCHAs or rotate proxies.</li>
+          <li>Enrichment data is only as good as Crossref/OpenAlex coverage. A blank value means unknown, not zero.</li>
+          <li>Ranking labels describe journals, not the quality of an individual paper.</li>
+        </ul>
+      </section>
+    </div>
+    <div class="dialog-actions">
+      <button id="btnCloseGuide" class="primary">Close</button>
     </div>
   </dialog>
 

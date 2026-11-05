@@ -1,5 +1,30 @@
 # Changelog
 
+## 4.1.1
+
+Normal release of the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+published at the
+[v4.1.1 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v4.1.1).
+
+Explanations for a first-time user, without adding a single new data source.
+
+### Added
+
+- **Column help bubbles.** Every non-obvious column header (Decision, PDF,
+  Index, Rank, Cited, OA, Tags) now carries a small `?` that explains the
+  column on hover or keyboard focus, including what each value means and which
+  provider produced it. The OA bubble lists gold / green / bronze / hybrid /
+  closed, and notes that `closed` reflects OpenAlex coverage rather than proof
+  of a paywall.
+- **Guide page.** A sidebar **Guide** entry opens a short reference covering
+  first run, screening, column meanings, exporting, the systematic-review
+  tools, keyboard shortcuts, and the app's honest limits. Column bubbles link
+  straight to the relevant section.
+
+Header labels moved into a span so the sort indicator updates the label without
+removing the help button beside it.
+
 ## 4.0.2
 
 Normal release of the

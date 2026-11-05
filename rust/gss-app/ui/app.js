@@ -166,6 +166,24 @@ function init() {
   bindPopover("btnActionsMenu", "actionsMenu");
   bindPopover("btnView", "columnsMenu");
   $("btnFilters").onclick = () => toggleFiltersPopover();
+  $("btnGuide").onclick = () => openGuide();
+  $("btnCloseGuide").onclick = () => $("guideDialog").close();
+
+  // Column help: hover to peek, focus for keyboard users, Escape to dismiss.
+  for (const button of document.querySelectorAll(".th-help")) {
+    const key = button.dataset.help;
+    button.addEventListener("pointerenter", () => showHelp(key, button));
+    button.addEventListener("pointerleave", () => hideHelp());
+    button.addEventListener("focus", () => showHelp(key, button));
+    button.addEventListener("blur", () => hideHelp());
+    button.addEventListener("click", (e) => {
+      // Click pins it open for users who prefer not to hover.
+      e.stopPropagation();
+      const bubble = $("helpBubble");
+      if (bubble.hidden) showHelp(key, button);
+      else hideHelp();
+    });
+  }
 
   // ---- collection actions ----
   $("btnCheck").onclick = () => { closeMenus(); checkMetadataPdfs(false); };
@@ -293,7 +311,10 @@ function init() {
     else if (query.addListener) query.addListener(listener);
   }
 
-  document.addEventListener("click", closeMenus);
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#helpBubble, .th-help")) hideHelp();
+    closeMenus();
+  });
   document.addEventListener("keydown", onKeyDown);
   $("recordInspector").addEventListener("keydown", trapInspectorFocus);
   window.addEventListener("resize", updateInspectorMode);
@@ -383,6 +404,10 @@ function onKeyDown(e) {
   if (e.key === "Escape") {
     // Precedence: popovers, then the inspector (via its draft guard), then a
     // running cancellable operation, then the selection.
+    if (hideHelp()) {
+      e.preventDefault();
+      return;
+    }
     if (closeMenus()) {
       e.preventDefault();
       return;
@@ -815,6 +840,169 @@ function applyArticleCollection(articles, mode, options = {}) {
     refreshInspector();
   }
   if (options.persist !== false) saveResultsSoon();
+}
+
+// ---- column help ----
+// Short answers for the columns whose meaning is not obvious from the header.
+// `source` says who actually produced the value: users otherwise assume every
+// column came from Google Scholar, which is only true for title/authors/link.
+const COLUMN_HELP = {
+  decision: {
+    title: "Decision",
+    body: "Your screening verdict for this paper. Nothing is decided until you set it.",
+    points: [
+      ["Undecided", "not screened yet — blank in the table."],
+      ["Include", "this paper belongs in your review."],
+      ["Maybe", "needs a second look or a full-text read."],
+      ["Exclude", "out of scope; record a coded reason so you can report why."],
+    ],
+    source: "Your own screening. Saved per DOI/title, so it survives a new search.",
+  },
+  pdf: {
+    title: "PDF",
+    body: "Whether this app found a downloadable public PDF — not whether the paper is free to read at its publisher.",
+    points: [
+      ["Downloaded", "a copy is saved on disk; click to reveal it."],
+      ["Public PDF", "a public link was found; click to open it."],
+      ["No public PDF", "checked, and none was found."],
+      ["Unknown", "not checked yet — run Check metadata + PDFs."],
+    ],
+    source: "This app's own availability check against the publisher/OpenAlex.",
+  },
+  index: {
+    title: "Index",
+    body: "Which abstracting/indexing services list the journal, taken from the ranking file you imported.",
+    points: [
+      ["SJR Q1–Q4", "Scimago Journal Rank quartile."],
+      ["SINTA S1–S6", "Indonesian SINTA rank."],
+      ["SCOPUS / DOAJ", "listed in those databases."],
+      ["Blank", "no match in your imported file — unknown, not unranked."],
+    ],
+    source: "Your imported ranking file (Settings → Import rankings).",
+  },
+  rank: {
+    title: "Rank",
+    body: "The journal's rank values as imported, shown as SJR / SINTA. This describes the journal, never the individual paper.",
+    points: [
+      ["Q1", "top quartile of its SJR category."],
+      ["S2", "SINTA rank 2."],
+      ["Blank", "the journal was not found in the imported file."],
+    ],
+    source: "Your imported ranking file. Sorting by Rank is alphabetical, not by quality.",
+  },
+  cited: {
+    title: "Cited",
+    body: "How many works cite this paper, as reported by Crossref or OpenAlex.",
+    points: [
+      ["Blank", "not checked yet, or the provider had no count."],
+      ["0", "checked, and no citations were found — this is a real zero."],
+    ],
+    source: "Crossref / OpenAlex during Check metadata + PDFs.",
+  },
+  oa: {
+    title: "OA — Open Access",
+    body: "Whether an open-access copy exists anywhere, as reported by OpenAlex. Separate from the PDF column, which is about a downloadable file.",
+    points: [
+      ["gold", "free at the publisher with an open licence."],
+      ["green", "free copy in a repository (institutional, arXiv)."],
+      ["bronze", "free to read at the publisher, but with no open licence — it can be withdrawn."],
+      ["hybrid", "a paywalled journal, this article is open."],
+      ["closed", "checked, and no open version was found."],
+      ["Blank", "not checked yet."],
+    ],
+    source: "OpenAlex. \"closed\" reflects what OpenAlex knows, not proof the article is paywalled.",
+  },
+  tags: {
+    title: "Tags",
+    body: "Free-form labels you assign to group papers, for example by theme or method.",
+    points: [
+      ["Add", "type them comma-separated in the inspector's Screening section."],
+      ["Filter", "use Filters → Tag contains, or click a saved filter."],
+    ],
+    source: "Your own review data.",
+  },
+};
+
+let helpTrigger = null;
+
+function showHelp(key, trigger) {
+  const entry = COLUMN_HELP[key];
+  const bubble = $("helpBubble");
+  if (!entry || !bubble) return;
+  helpTrigger = trigger || null;
+
+  bubble.innerHTML = "";
+  const h = document.createElement("div");
+  h.className = "help-title";
+  h.textContent = entry.title;
+  const body = document.createElement("p");
+  body.textContent = entry.body;
+  bubble.appendChild(h);
+  bubble.appendChild(body);
+
+  if (entry.points && entry.points.length) {
+    const dl = document.createElement("dl");
+    dl.className = "help-list";
+    for (const [term, meaning] of entry.points) {
+      const dt = document.createElement("dt");
+      dt.textContent = term;
+      const dd = document.createElement("dd");
+      dd.textContent = meaning;
+      dl.appendChild(dt);
+      dl.appendChild(dd);
+    }
+    bubble.appendChild(dl);
+  }
+
+  const source = document.createElement("div");
+  source.className = "help-source";
+  source.textContent = entry.source;
+  bubble.appendChild(source);
+
+  const more = document.createElement("button");
+  more.className = "ghost help-more";
+  more.textContent = "Open the guide";
+  more.onclick = () => { hideHelp(); openGuide(key); };
+  bubble.appendChild(more);
+
+  bubble.hidden = false;
+  positionHelp(trigger, bubble);
+}
+
+function positionHelp(trigger, bubble) {
+  if (!trigger) return;
+  const rect = trigger.getBoundingClientRect();
+  bubble.style.top = `${Math.round(rect.bottom + 8)}px`;
+  bubble.style.left = `${Math.round(rect.left)}px`;
+  clampToViewport(bubble);
+}
+
+function hideHelp() {
+  const bubble = $("helpBubble");
+  if (bubble && !bubble.hidden) {
+    bubble.hidden = true;
+    return true;
+  }
+  return false;
+}
+
+function openGuide(section = null) {
+  const dialog = $("guideDialog");
+  if (!dialog) return;
+  if (!dialog.open) dialog.showModal();
+  const body = dialog.querySelector(".guide-body");
+  // Column keys map onto the shared "columns" section; other values are their
+  // own section ids.
+  const sectionId = section && COLUMN_HELP[section] ? "columns" : section;
+  const target = sectionId ? document.getElementById(`guide-${sectionId}`) : null;
+  if (target && body) {
+    // Scroll the panel itself: scrollIntoView would also move the parent, and
+    // offsetTop is relative to the scroll container, not the target's parent.
+    const delta = target.getBoundingClientRect().top - body.getBoundingClientRect().top;
+    body.scrollTop = Math.max(0, body.scrollTop + delta - 8);
+  } else if (body) {
+    body.scrollTop = 0;
+  }
 }
 
 // ---- selection surface ----
@@ -1399,10 +1587,15 @@ function renderResults() {
 
 function updateSortIndicators() {
   for (const th of document.querySelectorAll("th.sortable")) {
-    const base = th.textContent.replace(/\s*[\u25b2\u25bc]$/, "");
+    // The indicator lives in the label span: writing to the <th> would delete
+    // the help button that sits beside it.
+    const label = th.querySelector(".th-label");
+    if (!label) continue;
+    const base = label.dataset.base || label.textContent.replace(/\s*[\u25b2\u25bc]$/, "");
+    label.dataset.base = base;
     const active = th.dataset.key === sortKey;
     th.classList.toggle("sorted", active);
-    th.textContent = active ? `${base} ${sortDir === 1 ? "\u25b2" : "\u25bc"}` : base;
+    label.textContent = active ? `${base} ${sortDir === 1 ? "\u25b2" : "\u25bc"}` : base;
     th.setAttribute("aria-sort", active ? (sortDir === 1 ? "ascending" : "descending") : "none");
   }
   syncColumnCheckboxes();
