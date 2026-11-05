@@ -4,7 +4,9 @@ on:
   push:
     branches: [main]
     paths: ["rust/**"]
-    tags: ["v3.*"]
+    # Match any vX.Y.Z tag: the filter was pinned to v3.*, so the v4.0.0 tag
+    # silently produced no run at all (no release, no installer).
+    tags: ["v[0-9]+.*"]
   pull_request:
     branches: [main]
     paths: ["rust/**"]
@@ -55,7 +57,7 @@ jobs:
           Get-ChildItem $dir | ForEach-Object { Write-Host $_.Name }
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v3.')
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: test
     runs-on: windows-latest
     permissions:
