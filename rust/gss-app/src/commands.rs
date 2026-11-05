@@ -1158,6 +1158,154 @@ pub fn export_excel(
     Ok(format!("Exported {} result(s) to {path}.", articles.len()))
 }
 
+/// Add records by pasting DOIs (1.7): resolve each through Crossref and append.
+///
+/// Unresolvable DOIs are skipped rather than failing the whole paste, and the
+/// caller gets a count so it can report what actually landed.
+#[tauri::command]
+pub fn discovery_add_dois(state: State<'_, AppState>, text: String) -> Result<usize, CommandError> {
+    let dois = gss_core::discovery::parse_pasted_dois(&text);
+    if dois.is_empty() {
+        return Err(CommandError::new(
+            crate::errors::INVALID_ARGUMENT,
+            "No DOIs found in the pasted text.",
+        ));
+    }
+    let mut transport = ReqwestCrossref::new();
+    let mut client = gss_core::crossref::CrossrefClient::new(&mut transport);
+    let cache_file = crate::settings::cache_path();
+    let inner = gss_core::crossref::HttpClientLookup {
+        client: &mut client,
+    };
+    let mut lookup = CachedLookup::new(inner, cache_file.clone());
+
+    let mut found: Vec<gss_core::models::Article> = Vec::new();
+    for doi in &dois {
+        let Some(record) = gss_core::crossref::ArticleLookup::lookup(&mut lookup, doi) else {
+            continue;
+        };
+        let journal = record.journal.clone();
+        let issns = record.issns.clone();
+        let year = record.year;
+        found.push(gss_core::models::Article {
+            title: format!("(pasted DOI) {doi}"),
+            journal,
+            issns,
+            publication_year: year,
+            doi: record.doi.clone(),
+            link: record.url.clone(),
+            ..gss_core::models::Article::default()
+        });
+    }
+    lookup.flush(cache_file.as_ref());
+
+    if found.is_empty() {
+        return Err(CommandError::new(
+            crate::errors::INVALID_ARGUMENT,
+            format!("None of the {} pasted DOI(s) resolved.", dois.len()),
+        ));
+    }
+    let mut combined = state.articles();
+    let before = combined.len();
+    combined.extend(found);
+    let deduped = gss_core::dedupe::deduplicate_articles(combined);
+    let total = deduped.articles.len();
+    state.set_articles(deduped.articles);
+    Ok(total.saturating_sub(before))
+}
+
+/// Citation chasing (4.1): records citing, or cited by, the given DOI.
+///
+/// Uses OpenAlex through the same JSON GET seam the PDF check already uses.
+#[tauri::command]
+pub fn discovery_citation_chase(
+    doi: String,
+    direction: String,
+    limit: Option<usize>,
+) -> Result<Vec<gss_core::models::Article>, CommandError> {
+    let doi = doi.trim();
+    if doi.is_empty() {
+        return Err(CommandError::new(
+            crate::errors::INVALID_ARGUMENT,
+            "Select a record with a DOI first.",
+        ));
+    }
+    let limit = limit.unwrap_or(25).clamp(1, 100);
+    let mut transport = ReqwestCrossref::new();
+    let mut fetcher = ReqwestPdfFetcher::new();
+    let resolver = gss_core::pdf::PublicResolver("93.184.216.34".to_string());
+    let _ = &mut fetcher;
+    let _ = &resolver;
+
+    let encoded = gss_core::pdf::quote_url(doi, "/");
+    if direction == "references" {
+        // Backward: fetch the seed work, then each referenced work.
+        let seed_url = format!("https://api.openalex.org/works/doi:{encoded}");
+        let seed =
+            gss_core::crossref::openalex_json(&mut transport, &seed_url).ok_or_else(|| {
+                CommandError::new(
+                    crate::errors::NETWORK_FAILED,
+                    "OpenAlex could not be reached for this DOI.",
+                )
+            })?;
+        let ids = gss_core::discovery::referenced_work_ids(&seed);
+        let mut payloads: Vec<serde_json::Value> = Vec::new();
+        for id in ids.into_iter().take(limit) {
+            let url = format!("https://api.openalex.org/works/{id}");
+            if let Some(payload) = gss_core::crossref::openalex_json(&mut transport, &url) {
+                payloads.push(payload);
+            }
+        }
+        Ok(gss_core::discovery::articles_from_works(
+            &payloads, "backward",
+        ))
+    } else {
+        // Forward: works that cite this DOI.
+        let seed_url = format!("https://api.openalex.org/works/doi:{encoded}");
+        let seed =
+            gss_core::crossref::openalex_json(&mut transport, &seed_url).ok_or_else(|| {
+                CommandError::new(
+                    crate::errors::NETWORK_FAILED,
+                    "OpenAlex could not be reached for this DOI.",
+                )
+            })?;
+        let id = seed
+            .get("id")
+            .and_then(|i| i.as_str())
+            .map(|i| i.rsplit('/').next().unwrap_or(i).to_string())
+            .ok_or_else(|| {
+                CommandError::new(
+                    crate::errors::INVALID_ARGUMENT,
+                    "OpenAlex returned no work id.",
+                )
+            })?;
+        let url = format!("https://api.openalex.org/works?filter=cites:{id}&per-page={limit}");
+        let payload = gss_core::crossref::openalex_json(&mut transport, &url).ok_or_else(|| {
+            CommandError::new(
+                crate::errors::NETWORK_FAILED,
+                "OpenAlex could not be reached for the citing works.",
+            )
+        })?;
+        let related = gss_core::discovery::citing_works(&payload, limit);
+        Ok(related
+            .into_iter()
+            .map(|w| gss_core::models::Article {
+                title: w.title,
+                doi: w.doi.clone(),
+                link: if w.doi.is_empty() {
+                    String::new()
+                } else {
+                    format!("https://doi.org/{}", w.doi)
+                },
+                publication_year: w.year,
+                pdf_status: gss_core::models::PDF_STATUS_UNKNOWN.to_string(),
+                pdf_detail: "Discovered by forward citation chasing; not yet checked.".to_string(),
+                ..gss_core::models::Article::default()
+            })
+            .collect())
+    }
+}
+
 /// Restore the saved window geometry (7.1) and remember later changes.
 ///
 /// Called once from the window setup hook: a saved size is only applied when it

@@ -9,6 +9,7 @@ pub mod catalog;
 pub mod client;
 pub mod crossref;
 pub mod dedupe;
+pub mod discovery;
 pub mod exporters;
 pub mod exports_extra;
 pub mod models;

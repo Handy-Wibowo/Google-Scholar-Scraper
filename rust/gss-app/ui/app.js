@@ -187,6 +187,11 @@ function init() {
   bindReview("menuBaselineDiff", diffBaseline);
   bindReview("menuRescore", rescoreWithQuery);
   bindReview("menuImportExport", importOwnExport);
+  bindReview("menuPasteDois", openPasteDois);
+  bindReview("menuCiteForward", () => citationChase("citations"));
+  bindReview("menuCiteBackward", () => citationChase("references"));
+  $("btnPasteDoisCancel").onclick = () => $("pasteDialog").close();
+  $("btnPasteDoisOk").onclick = addPastedDois;
   $("btnExportMenu").onclick = (e) => {
     e.stopPropagation();
     toggleMenu("exportMenu", "btnExportMenu", !$("exportMenu").classList.contains("open"));
@@ -1826,6 +1831,53 @@ async function importOwnExport() {
     setStatus("Imported", `${added} new record(s) merged from ${path}.`, "success");
   } catch (err) {
     showError("Import failed", errMessage(err));
+  }
+}
+
+// ---- discovery (P7) ----
+function openPasteDois() {
+  $("pasteDois").value = "";
+  $("pasteDialog").showModal();
+  $("pasteDois").focus();
+}
+
+async function addPastedDois() {
+  const text = $("pasteDois").value;
+  $("pasteDialog").close();
+  try {
+    const added = await invoke("discovery_add_dois", { text });
+    const restored = await invoke("load_results").catch(() => []);
+    if (Array.isArray(restored) && restored.length) storedArticles = restored;
+    renderResults();
+    setStatus("Records added", `${added} new record(s) resolved from pasted DOIs.`, "success");
+  } catch (err) {
+    showError("Could not add records", errMessage(err));
+  }
+}
+
+async function citationChase(direction) {
+  const index = selection.size > 0 ? [...selection][0] : -1;
+  const article = index >= 0 ? storedArticles[index] : null;
+  const doi = article && article.doi ? article.doi.trim() : "";
+  if (!doi) {
+    setStatus("No DOI", "Select a record that has a DOI, then chase its citations.", "warning");
+    return;
+  }
+  setStatus("Chasing citations", `Looking up ${direction === "citations" ? "works citing" : "works cited by"} ${doi}.`, "running");
+  try {
+    const found = await invoke("discovery_citation_chase", { doi, direction, limit: 25 });
+    if (!Array.isArray(found) || found.length === 0) {
+      setStatus("Nothing found", "OpenAlex returned no related works for this DOI.", "warning");
+      return;
+    }
+    // Offer the discovery as an import rather than replacing the current set.
+    const merged = await invoke("review_append", { articles: found });
+    const restored = await invoke("load_results").catch(() => []);
+    if (Array.isArray(restored) && restored.length) storedArticles = restored;
+    renderResults();
+    setStatus("Citations chased", `Added ${merged} record(s) from ${direction}.`, "success");
+  } catch (err) {
+    showError("Citation chasing failed", errMessage(err));
   }
 }
 

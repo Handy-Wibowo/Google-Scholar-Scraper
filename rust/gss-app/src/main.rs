@@ -71,6 +71,8 @@ fn main() {
             commands::review_import_export,
             commands::restore_window_geometry,
             commands::save_window_geometry,
+            commands::discovery_add_dois,
+            commands::discovery_citation_chase,
             commands::cancel_operation,
             commands::pick_path,
             commands::load_settings,

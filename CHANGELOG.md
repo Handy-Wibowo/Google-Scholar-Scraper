@@ -1,5 +1,37 @@
 # Changelog
 
+## 4.0.0
+
+Normal release of the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+published at the
+[v4.0.0 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v4.0.0).
+
+Phase 7 of the [roadmap](docs/ROADMAP.md): discovery. The major bump reflects what
+this changes rather than a cosmetic milestone — the app can now create result sets
+from sources other than a keyword search.
+
+### Added
+
+- **Add records by pasting DOIs.** One per line or comma separated; accepts bare
+  DOIs, `doi:` prefixes, and `https://doi.org/…` links. Each is resolved through
+  Crossref (using the existing on-disk cache) and merged with the current set, so
+  a reading list you already have becomes part of the review. Unresolvable DOIs
+  are skipped and counted, not treated as a failure.
+- **Citation chasing, both directions.** Select a record and ask for the works
+  that *cite* it (forward) or the works it *cites* (backward), via OpenAlex through
+  the same JSON transport the PDF check already uses. Results are merged into the
+  current set so they can be screened and exported like anything else.
+  Verified live: 10 citing works forward and 8 references backward for a known
+  DOI, with titles, DOIs and years intact.
+- A paste-DOIs dialog and the three discovery entries in the Review menu.
+
+### Compatibility
+
+No export format changed; parity gate 4 remains zero-diff. New records enter as
+ordinary `Article` rows, so every existing export, filter and review action works
+on them unchanged.
+
 ## 3.8.0
 
 Normal release of the

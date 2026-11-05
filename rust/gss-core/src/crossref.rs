@@ -995,7 +995,7 @@ fn openalex_abstract(fetcher: &mut dyn CrossrefFetcher, url: &str) -> Option<Str
     crate::abstracts::abstract_from_openalex(&payload)
 }
 
-fn openalex_json(fetcher: &mut dyn CrossrefFetcher, url: &str) -> Option<Value> {
+pub fn openalex_json(fetcher: &mut dyn CrossrefFetcher, url: &str) -> Option<Value> {
     let headers = vec![
         ("User-Agent".to_string(), DEFAULT_USER_AGENT.to_string()),
         ("Accept".to_string(), "application/json".to_string()),

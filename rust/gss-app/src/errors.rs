@@ -34,6 +34,7 @@ pub const NO_FILE_FOUND: &str = "NO_FILE_FOUND";
 pub const UNSUPPORTED_FORMAT: &str = "UNSUPPORTED_FORMAT";
 pub const EXPORT_FAILED: &str = "EXPORT_FAILED";
 pub const INVALID_ARGUMENT: &str = "INVALID_ARGUMENT";
+pub const NETWORK_FAILED: &str = "NETWORK_FAILED";
 
 impl CommandError {
     pub fn already_running() -> Self {

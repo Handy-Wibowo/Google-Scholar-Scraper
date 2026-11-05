@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Google Scholar Scraper v3.8.0</title>
+  <title>Google Scholar Scraper v4.0.0</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -202,7 +202,7 @@
 
   <div class="header">
     <div class="titles">
-      <h1>Google Scholar Scraper v3.8.0</h1>
+      <h1>Google Scholar Scraper v4.0.0</h1>
       <div class="subtitle">Search, rank, review, and export Scholar results.</div>
     </div>
     <button id="btnCancel" disabled>Cancel</button>
@@ -253,6 +253,9 @@
         <button id="menuBaselineDiff">Diff against baseline…</button>
         <button id="menuRescore">Re-score with the query…</button>
         <button id="menuImportExport">Import a CSV/JSON export…</button>
+        <button id="menuPasteDois">Add records by pasting DOIs…</button>
+        <button id="menuCiteForward">Find works citing this DOI</button>
+        <button id="menuCiteBackward">Find works this DOI cites</button>
       </div>
     </div>
     <div class="row">
@@ -430,6 +433,18 @@
       <button id="btnDetailCopyTitle">Copy title</button>
       <span class="spacer"></span>
       <button id="btnCloseDetail">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="pasteDialog">
+    <h3>Add records by pasting DOIs</h3>
+    <div class="disclaimer">One per line, or separated by commas. Accepts bare DOIs, <code>doi:</code> prefixes and full <code>https://doi.org/…</code> links.</div>
+    <div class="row">
+      <textarea id="pasteDois" rows="8" style="flex:1;font:inherit;border:1px solid var(--border-strong);border-radius:4px;padding:6px"></textarea>
+    </div>
+    <div class="row">
+      <button id="btnPasteDoisOk" class="primary">Add records</button>
+      <button id="btnPasteDoisCancel">Cancel</button>
     </div>
   </dialog>
 
