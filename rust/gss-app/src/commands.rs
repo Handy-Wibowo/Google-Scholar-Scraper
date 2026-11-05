@@ -366,15 +366,18 @@ pub fn cancel_operation(state: State<'_, AppState>) {
 pub fn check_metadata_pdfs(
     app: AppHandle,
     state: State<'_, AppState>,
+    articles: Vec<gss_core::models::Article>,
     metadata_only: Option<bool>,
 ) -> Result<(), CommandError> {
     if state.is_running() {
         return Err(CommandError::already_running());
     }
-    let articles = state.articles();
+    // The displayed collection is the source of truth: a restored session
+    // lives only in the UI, so reading backend state alone would check nothing.
     if articles.is_empty() {
         return Err(CommandError::nothing_to_check());
     }
+    state.set_articles(articles.clone());
     let catalog = state.catalog.lock().map(|c| c.clone()).unwrap_or_default();
     state.set_running(Some(Operation::Check));
     let app_handle = app.clone();
@@ -650,13 +653,16 @@ impl gss_core::pdf::PdfStream for BlockingStream {
 pub fn download_pdfs(
     app: AppHandle,
     state: State<'_, AppState>,
+    articles: Vec<gss_core::models::Article>,
     indices: Vec<usize>,
     folder: String,
 ) -> Result<(), CommandError> {
     if state.is_running() {
         return Err(CommandError::already_running());
     }
-    let articles = state.articles();
+    if !articles.is_empty() {
+        state.set_articles(articles.clone());
+    }
     let selected: Vec<gss_core::models::Article> = indices
         .iter()
         .filter_map(|i| articles.get(*i).cloned())
@@ -718,6 +724,7 @@ pub fn download_pdfs(
 pub fn import_ranking(
     app: AppHandle,
     state: State<'_, AppState>,
+    articles: Vec<gss_core::models::Article>,
     path: String,
     default_year: Option<i32>,
 ) -> Result<(), CommandError> {
@@ -729,6 +736,9 @@ pub fn import_ranking(
     }
     // Staging clone: a rejected file leaves the loaded records untouched.
     let existing = state.catalog.lock().map(|c| c.clone()).unwrap_or_default();
+    if !articles.is_empty() {
+        state.set_articles(articles.clone());
+    }
     state.set_running(Some(Operation::Import));
     let app_handle = app.clone();
     std::thread::spawn(move || {
@@ -771,9 +781,10 @@ pub fn import_ranking(
                     if let Err(e) = crate::settings::save_catalog(&staged) {
                         crate::logging::warn("catalog_persist_failed", &format!("error={e}"));
                     }
-                    let current = s.articles();
-                    if !current.is_empty() {
-                        let mut updated = current;
+                    // Relabel the snapshot the user is looking at; the backend
+                    // copy is empty for a restored session.
+                    if !articles.is_empty() {
+                        let mut updated = articles;
                         let gained = relabel_articles(&mut updated, &staged);
                         s.set_articles(updated.clone());
                         let _ = gained;
@@ -1046,7 +1057,15 @@ pub fn load_catalog_records() -> Vec<gss_core::catalog::JournalRankRecord> {
 
 /// Persist window settings; the UI ignores failures (session keeps working).
 #[tauri::command]
-pub fn save_settings(settings: crate::settings::UiSettings) -> Result<(), String> {
+pub fn save_settings(mut settings: crate::settings::UiSettings) -> Result<(), String> {
+    // Window geometry is native-owned: the UI omits those fields, and the
+    // container-level serde default would otherwise zero them on every save.
+    let previous = crate::settings::load_with_notice().settings;
+    settings.window_x = previous.window_x;
+    settings.window_y = previous.window_y;
+    settings.window_w = previous.window_w;
+    settings.window_h = previous.window_h;
+    settings.window_maximized = previous.window_maximized;
     crate::settings::save(&settings)
 }
 
@@ -1432,36 +1451,40 @@ pub fn review_near_duplicates(
 #[tauri::command]
 pub fn review_rescore(
     state: State<'_, AppState>,
+    articles: Vec<gss_core::models::Article>,
     query: String,
     enabled: bool,
-) -> Result<(), CommandError> {
-    let articles = state.articles();
+) -> Result<Vec<gss_core::models::Article>, CommandError> {
     if articles.is_empty() {
         return Err(CommandError::nothing_to_check());
     }
     let ranked = gss_core::ranking::rank_articles(&query, articles, enabled);
-    state.set_articles(ranked);
-    Ok(())
+    state.set_articles(ranked.clone());
+    // Return the result: the UI must not reload a sidecar that may be stale.
+    Ok(ranked)
 }
 
 /// Compare the current set against a named baseline.
 #[tauri::command]
 pub fn review_diff_baseline(
-    state: State<'_, AppState>,
     name: String,
+    articles: Vec<gss_core::models::Article>,
 ) -> Option<gss_core::review::BaselineDiff> {
     crate::settings::load_project()
         .to_core()
-        .diff_baseline(&name, &state.articles())
+        .diff_baseline(&name, &articles)
 }
 
 /// Store the current set as a named baseline.
 #[tauri::command]
-pub fn review_save_baseline(state: State<'_, AppState>, name: String) -> Result<(), CommandError> {
-    let mut stored = crate::settings::load_project();
+pub fn review_save_baseline(
+    name: String,
+    articles: Vec<gss_core::models::Article>,
+) -> Result<(), CommandError> {
+    let stored = crate::settings::load_project();
     let mut project = stored.to_core();
-    project.save_baseline(&name, &state.articles());
-    stored = crate::settings::StoredProject::from_core(&project);
+    project.save_baseline(&name, &articles);
+    let stored = crate::settings::StoredProject::from_core(&project);
     crate::settings::save_project(&stored).map_err(|e| {
         CommandError::new(
             crate::errors::INVALID_ARGUMENT,
@@ -1493,7 +1516,8 @@ pub fn review_append(
 pub fn review_import_export(
     state: State<'_, AppState>,
     path: String,
-) -> Result<usize, CommandError> {
+    current: Vec<gss_core::models::Article>,
+) -> Result<Vec<gss_core::models::Article>, CommandError> {
     use gss_core::models::Article;
     let target = Path::new(&path);
     if !target.is_file() {
@@ -1587,12 +1611,12 @@ pub fn review_import_export(
             "No records found in that file.",
         ));
     }
-    let mut combined = state.articles();
-    let before = combined.len();
+    let mut combined = current;
     combined.extend(imported);
-    let deduped = gss_core::dedupe::deduplicate_articles(combined);
-    state.set_articles(deduped.articles.clone());
-    Ok(deduped.articles.len() - before)
+    let merged = gss_core::dedupe::deduplicate_articles(combined).articles;
+    state.set_articles(merged.clone());
+    let _ = crate::settings::save_results(&merged);
+    Ok(merged)
 }
 
 /// Minimal CSV field splitter for the app's own export (quoted fields, doubled

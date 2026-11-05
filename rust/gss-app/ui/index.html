@@ -1,502 +1,508 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Google Scholar Scraper v4.0.2</title>
-  <style>
-    :root {
-      color-scheme: light dark;
-    }
-    :root[data-theme="dark"] {
-      --app-bg: #0f141b; --surface: #161d26; --surface-alt: #1d2632;
-      --text: #e6edf3; --muted: #9aa7b6; --border: #2b3644; --border-strong: #3d4b5c;
-      --primary: #4d8ff0; --primary-hover: #6aa4f5; --secondary-hover: #222c39;
-      --disabled: #66717f; --selection: #1e3149;
-    }
-    :root[data-theme="light"] {
-      --app-bg: #f3f6fb; --surface: #ffffff; --surface-alt: #f8fafc;
-      --text: #111827; --muted: #5b677a; --border: #d8e0ea; --border-strong: #b9c6d6;
-      --primary: #185abc; --primary-hover: #1f6feb; --secondary-hover: #f4f7fb;
-      --disabled: #a6afbd; --selection: #dbeafe;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; background: var(--app-bg); color: var(--text);
-      font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
-      display: flex; flex-direction: column; height: 100vh;
-    }
-    .menubar {
-      display: flex; align-items: center; gap: 2px;
-      background: var(--surface); border-bottom: 1px solid var(--border);
-      padding: 2px 12px;
-    }
-    .menubtn {
-      background: transparent; border: none; padding: 3px 10px; border-radius: 4px;
-    }
-    .menubtn.open, .menubtn:hover:not(:disabled) { background: var(--secondary-hover); }
-    .menu {
-      position: absolute; top: 26px; left: 12px; z-index: 20;
-      background: var(--surface); border: 1px solid var(--border-strong);
-      border-radius: 6px; box-shadow: 0 6px 20px rgba(17, 24, 39, 0.16);
-      padding: 4px; min-width: 240px; display: none;
-    }
-    .menu.open { display: block; }
-    .menu button {
-      display: flex; justify-content: space-between; gap: 24px; width: 100%;
-      background: transparent; border: none; text-align: left; padding: 5px 8px;
-    }
-    .menu button:hover:not(:disabled) { background: var(--selection); }
-    .menu .acc { color: var(--muted); font-size: 11px; }
-    .ctxmenu {
-      position: absolute; z-index: 30; background: var(--surface);
-      border: 1px solid var(--border-strong); border-radius: 6px;
-      box-shadow: 0 6px 20px rgba(17, 24, 39, 0.16);
-      padding: 4px; min-width: 210px;
-    }
-    .ctxmenu button {
-      display: block; width: 100%; text-align: left; background: transparent;
-      border: none; padding: 5px 8px;
-    }
-    .ctxmenu button:hover:not(:disabled) { background: var(--selection); }
-    .header {
-      display: flex; align-items: center; gap: 12px;
-      padding: 10px 18px 6px;
-    }
-    .header .titles { flex: 1; }
-    .header h1 { font-size: 16px; margin: 0; }
-    .header .subtitle { color: var(--muted); font-size: 12px; }
-    .panel {
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: 8px; margin: 0 18px 10px; padding: 10px 12px;
-    }
-    .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
-    .row:last-child { margin-bottom: 0; }
-    label { color: var(--muted); font-size: 12px; }
-    input[type="text"], input[type="number"] {
-      border: 1px solid var(--border-strong); border-radius: 4px;
-      padding: 4px 8px; font: inherit; background: var(--surface); min-width: 300px;
-    }
-    input.small { min-width: 0; width: 60px; }
-    select {
-      border: 1px solid var(--border-strong); border-radius: 4px;
-      padding: 4px 6px; font: inherit; background: var(--surface);
-    }
-    button {
-      border: 1px solid var(--border-strong); border-radius: 4px;
-      padding: 3px 12px; font: inherit; cursor: pointer;
-      background: var(--surface-alt); color: var(--text);
-    }
-    button.primary { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
-    button:hover:not(:disabled) { filter: brightness(0.96); }
-    button:disabled { background: #f1f4f8; color: var(--disabled); cursor: arrow; border-color: var(--border); }
-    button.primary:disabled { background: #9bbbe8; color: #edf4ff; }
-    .notice { color: var(--muted); font-size: 11px; }
-    .status {
-      display: flex; gap: 10px; padding: 10px 12px;
-      border-left: 4px solid var(--border-strong);
-    }
-    .status .heading { font-weight: 700; font-size: 12px; }
-    .status .detail { color: var(--muted); font-size: 12px; }
-    .status.ready { background: var(--surface); border-color: var(--border-strong); }
-    .status.running { background: #eef4fc; border-color: var(--primary); }
-    .status.success { background: #effaf1; border-color: #1a7f37; }
-    .status.warning { background: #fff8e6; border-color: #9a6700; }
-    .status.error { background: #ffebe9; border-color: #cf222e; }
-    progress { width: 260px; height: 10px; }
-    .results { flex: 1; display: flex; flex-direction: column; margin: 0 18px 12px; min-height: 180px; }
-    .results-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
-    .results-toolbar .spacer { flex: 1; }
-    .results-toolbar h2 { font-size: 15px; margin: 0; }
-    .summary { color: var(--muted); font-size: 12px; }
-    input.filter {
-      min-width: 0; width: 180px; padding: 3px 8px; font-size: 12px;
-      border: 1px solid var(--border-strong); border-radius: 4px;
-    }
-    #appliedYear { color: var(--muted); font-size: 12px; }
-    .table-wrap {
-      flex: 1; overflow: auto; background: var(--surface);
-      border: 1px solid var(--border); border-radius: 8px;
-    }
-    table { border-collapse: collapse; width: 100%; }
-    thead th {
-      position: sticky; top: 0; background: #eef3f8; text-align: left;
-      font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--border);
-    }
-    thead th.sortable { cursor: pointer; user-select: none; }
-    thead th.sortable:hover { background: #e3ebf5; }
-    thead th.sorted { color: var(--primary); }
-    tbody td { padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 12px; }
-    tbody tr[data-iid] { cursor: default; }
-    tbody tr.selected { background: var(--selection); }
-    .empty {
-      flex: 1; display: flex; flex-direction: column; align-items: center;
-      justify-content: center; color: var(--muted); gap: 6px;
-    }
-    .empty .title { font-size: 16px; font-weight: 700; color: var(--text); }
-    .empty.hidden, .table-wrap.hidden { display: none; }
-    dialog {
-      border: 1px solid var(--border-strong); border-radius: 8px;
-      padding: 14px; min-width: 520px; max-width: 820px;
-    }
-    dialog::backdrop { background: rgba(17, 24, 39, 0.35); }
-    dialog h3 { margin: 0 0 10px; font-size: 14px; }
-    dialog .disclaimer { color: var(--muted); font-size: 11px; margin: 8px 0; }
-    /* v3.2.0 UX */
-    :focus-visible {
-      outline: 2px solid var(--primary); outline-offset: 1px; border-radius: 3px;
-    }
-    tbody tr:focus-visible {
-      outline: none; box-shadow: inset 0 0 0 2px var(--primary);
-    }
-    #resultsTable { table-layout: fixed; }
-    #resultsTable td {
-      max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    #resultsTable.compact tbody td { padding: 2px 8px; font-size: 11px; }
-    .linkbtn {
-      background: none; border: none; padding: 0; color: var(--primary);
-      text-decoration: underline; cursor: pointer; font: inherit;
-    }
-    .linkbtn:hover:not(:disabled) { filter: brightness(0.85); }
-    #configPanel.collapsed .row { display: none; }
-    .panel-head {
-      display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
-    }
-    .panel-head button {
-      background: transparent; border: none; padding: 0 4px; font-weight: 600;
-    }
-    .menu label { display: flex; gap: 6px; padding: 4px 8px; }
-    .menu label:hover { background: var(--selection); }
-    .toolbar-group { display: flex; align-items: center; gap: 6px; }
-    .smallwide { min-width: 140px; width: 180px; }
-    .badge.include { background: #1a7f37; color: #fff; }
-    .badge.exclude { background: #cf222e; color: #fff; }
-    .badge.maybe { background: #9a6700; color: #fff; }
-    .tagchip {
-      display: inline-block; background: var(--selection); border-radius: 3px;
-      padding: 0 5px; margin-right: 3px; font-size: 11px;
-    }
-    .toolbar-group label { display: flex; align-items: center; gap: 4px; }
-    .badge {
-      display: inline-block; padding: 0 4px; border-radius: 3px;
-      font-size: 10px; font-weight: 700; letter-spacing: 0.02em;
-      vertical-align: middle;
-    }
-    .badge.retracted { background: var(--error, #cf222e); color: #fff; }
-    dialog pre {
-      background: var(--surface-alt); border: 1px solid var(--border);
-      border-radius: 4px; padding: 10px; white-space: pre-wrap;
-      max-height: 320px; overflow: auto; font: 12px/1.5 "Segoe UI", sans-serif;
-    }
-  </style>
+  <title>Google Scholar Scraper v4.1.0</title>
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="menubar">
-    <button class="menubtn" id="btnFileMenu">File</button>
-    <div class="menu" id="fileMenu">
-      <button id="menuExportCitations">Export citations… <span class="acc">Ctrl+E</span></button>
-      <button id="menuOpenFolder" disabled>Open export folder</button>
+  <div class="app-shell">
+    <!-- ---------- navigation ---------- -->
+    <nav class="sidebar" aria-label="Library">
+      <div class="brand">
+        <span class="brand-name">Scholar Scraper</span>
+        <span class="brand-version">v4.1.0</span>
+      </div>
+
+      <div class="side-label">Library</div>
+      <button class="nav-item" id="navAll" data-view="all" aria-current="true" title="All papers">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+        <span class="nav-label">All papers</span>
+        <span class="nav-count" id="countAll">0</span>
+      </button>
+      <button class="nav-item" id="navUndecided" data-view="undecided" title="Papers still to screen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>
+        <span class="nav-label">To screen</span>
+        <span class="nav-count" id="countUndecided">0</span>
+      </button>
+      <button class="nav-item" id="navInclude" data-view="include" title="Included papers">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></svg>
+        <span class="nav-label">Included</span>
+        <span class="nav-count" id="countInclude">0</span>
+      </button>
+      <button class="nav-item" id="navMaybe" data-view="maybe" title="Maybe papers">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v.01M12 11v5"/></svg>
+        <span class="nav-label">Maybe</span>
+        <span class="nav-count" id="countMaybe">0</span>
+      </button>
+      <button class="nav-item" id="navExclude" data-view="exclude" title="Excluded papers">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="m9 9 6 6M15 9l-6 6"/></svg>
+        <span class="nav-label">Excluded</span>
+        <span class="nav-count" id="countExclude">0</span>
+      </button>
+
+      <div class="side-label">Collect</div>
+      <button class="nav-item" id="btnAddMenu" aria-haspopup="menu" aria-expanded="false" title="Add papers">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="nav-label">Add papers</span>
+      </button>
+      <div class="menu" id="addMenu" role="menu" hidden>
+        <button id="menuPasteDois" role="menuitem">Paste DOIs…</button>
+        <button id="menuImportExport" role="menuitem">Import CSV/JSON export…</button>
+      </div>
+
+      <button class="nav-item" id="btnReviewMenu" aria-haspopup="menu" aria-expanded="false" title="Review tools">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 4h14v16l-7-4-7 4z"/></svg>
+        <span class="nav-label">Review tools</span>
+      </button>
+      <div class="menu" id="reviewMenu" role="menu" hidden>
+        <div class="menu-heading">Screening</div>
+        <button id="menuPrisma" role="menuitem">PRISMA counts</button>
+        <button id="menuScreeningLog" role="menuitem">Export screening log (CSV)</button>
+        <button id="menuNearDup" role="menuitem">Near-duplicate report</button>
+        <hr />
+        <div class="menu-heading">Searches</div>
+        <button id="menuBaselineSave" role="menuitem">Save current set as baseline…</button>
+        <button id="menuBaselineDiff" role="menuitem">Diff against baseline…</button>
+        <button id="menuRescore" role="menuitem">Re-score with a query…</button>
+        <hr />
+        <div class="menu-heading">Journals</div>
+        <button id="btnGapReport" role="menuitem">Unranked journal gaps</button>
+      </div>
+
+      <div class="spacer"></div>
+      <div class="sidebar-footer">
+        <button class="nav-item" id="btnSettings" title="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6l1.4 1.4m10 10 1.4 1.4m0-12.8-1.4 1.4m-10 10L5.6 18.4"/></svg>
+          <span class="nav-label">Settings</span>
+        </button>
+      </div>
+    </nav>
+
+    <!-- ---------- workspace ---------- -->
+    <div class="workspace">
+      <header class="topbar">
+        <div class="search-form">
+          <div class="query-wrap">
+            <label for="query" class="visually-hidden" hidden>Search query</label>
+            <input type="search" id="query" list="queryHistory" placeholder="Search Google Scholar…"
+                   aria-label="Search query" autocomplete="off" />
+            <datalist id="queryHistory"></datalist>
+          </div>
+          <button id="btnSearch" class="primary">Search</button>
+          <button id="btnCancel" disabled>Cancel</button>
+          <button id="btnToggleConfig" aria-expanded="false" aria-controls="configPanel">Search options</button>
+        </div>
+      </header>
+
+      <section class="search-options" id="configPanel" hidden aria-label="Search options">
+        <div class="field">
+          <label for="pages">Pages</label>
+          <input type="text" id="pages" class="w-sm" value="1" inputmode="numeric" />
+        </div>
+        <div class="field">
+          <label for="yearPreset">Published</label>
+          <select id="yearPreset"></select>
+        </div>
+        <div class="field">
+          <label for="yearFrom">From</label>
+          <input type="text" id="yearFrom" class="w-sm" inputmode="numeric" />
+        </div>
+        <div class="field">
+          <label for="yearTo">To</label>
+          <input type="text" id="yearTo" class="w-sm" inputmode="numeric" />
+        </div>
+        <label class="check-row"><input type="checkbox" id="rankingEnabled" checked /> Rank by relevance</label>
+        <span class="notice" id="configHint">Metadata checks, Crossref enrichment, and public-PDF verification stay optional.</span>
+      </section>
+
+      <main class="library">
+        <div class="library-head">
+          <h2 class="library-title" id="viewTitle">All papers</h2>
+          <span class="library-meta" id="summary">No search has run yet.</span>
+          <span class="grow"></span>
+          <button id="btnActionsMenu" aria-haspopup="menu" aria-expanded="false">Actions</button>
+          <div class="menu" id="actionsMenu" role="menu" hidden>
+            <button id="btnCheck" role="menuitem" disabled>Check metadata + PDFs</button>
+            <button id="btnMetadataOnly" role="menuitem" disabled>Refresh metadata only</button>
+          </div>
+          <button id="btnExportMenu" class="primary" aria-haspopup="dialog">Export</button>
+        </div>
+
+        <div class="toolbar">
+          <input type="search" id="resultsSearch" placeholder="Find within results…" aria-label="Find within results" />
+          <button id="btnFilters" aria-haspopup="dialog" aria-expanded="false">Filters</button>
+          <button id="btnView" aria-haspopup="menu" aria-expanded="false">View</button>
+          <span class="grow"></span>
+          <span class="notice" id="appliedYear">Years: any time</span>
+        </div>
+
+        <div class="chips" id="filterChips" hidden></div>
+
+        <div class="selection-bar" id="selectionBar" hidden>
+          <span class="sel-count" id="selCount">0 selected</span>
+          <span class="sel-outside" id="selOutside" hidden></span>
+          <span class="grow"></span>
+          <button id="btnInclude" title="Mark selected rows as included">Include</button>
+          <button id="btnMaybe" title="Mark selected rows as maybe">Maybe</button>
+          <button id="btnExclude" title="Mark selected rows as excluded">Exclude</button>
+          <button id="btnDownload" disabled>Download PDFs</button>
+          <button id="btnDetails" disabled>Inspect</button>
+          <button id="btnExportSelected">Export selected</button>
+          <button id="btnClearSelection" class="ghost">Clear</button>
+        </div>
+
+        <div class="table-wrap" id="tableWrap">
+          <table id="resultsTable" tabindex="0" role="grid" aria-label="Search results">
+            <colgroup>
+              <col data-col="select" style="width:40px" />
+              <col data-col="title" style="width:320px" />
+              <col data-col="authors" style="width:160px" />
+              <col data-col="decision" style="width:104px" />
+              <col data-col="pdf" style="width:128px" />
+              <col data-col="index" style="width:88px" />
+              <col data-col="rank" style="width:72px" />
+              <col data-col="cited" style="width:72px" />
+              <col data-col="oa" style="width:96px" />
+              <col data-col="tags" style="width:140px" />
+              <col data-col="link" style="width:88px" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th scope="col" class="select-cell">
+                  <input type="checkbox" id="selectVisible" aria-label="Select all visible papers" />
+                </th>
+                <th class="sortable" data-key="title" scope="col" aria-sort="none" title="Sort by title">Title</th>
+                <th class="sortable" data-key="authors" scope="col" aria-sort="none" title="Sort by authors">Authors</th>
+                <th class="sortable" data-key="decision" scope="col" aria-sort="none" title="Your screening decision">Decision</th>
+                <th class="sortable" data-key="pdf" scope="col" aria-sort="none" title="Sort by public-PDF status">PDF</th>
+                <th class="sortable" data-key="index" scope="col" aria-sort="none" title="Sort by journal indexing (SJR, SINTA, SCOPUS)">Index</th>
+                <th class="sortable" data-key="rank" scope="col" aria-sort="none" title="Sort by journal rank">Rank</th>
+                <th class="sortable" data-key="cited" scope="col" aria-sort="none" title="Sort by citation count (Crossref / OpenAlex)">Cited</th>
+                <th class="sortable" data-key="oa" scope="col" aria-sort="none" title="Open-access status reported by OpenAlex">OA</th>
+                <th class="sortable" data-key="tags" scope="col" aria-sort="none" title="Tags you assigned">Tags</th>
+                <th class="sortable" data-key="link" scope="col" aria-sort="none" title="Sort by link presence">Link</th>
+              </tr>
+            </thead>
+            <tbody id="tableBody" role="rowgroup"></tbody>
+          </table>
+        </div>
+
+        <div class="empty" id="emptyState">
+          <div class="title" id="emptyTitle">Build your paper library</div>
+          <div class="detail" id="emptyDetail">Search Google Scholar or add papers by DOI to start screening.</div>
+          <div class="actions">
+            <button id="btnEmptyPrimary" class="primary">Focus search</button>
+            <button id="btnEmptyClear" hidden>Clear filters</button>
+          </div>
+        </div>
+      </main>
+
+      <footer class="statusbar ready" id="statusPanel" role="status" aria-live="polite">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="heading" id="statusHeading">Ready</span>
+        <span class="detail" id="statusDetail">Enter a query, choose pages, then start a search.</span>
+        <span class="grow"></span>
+        <progress id="progress" value="0" max="100" aria-label="Operation progress"></progress>
+        <button id="btnRetry" hidden>Retry search</button>
+        <button id="btnReveal" hidden>Open folder</button>
+      </footer>
     </div>
+
+    <!-- ---------- inspector ---------- -->
+    <div class="inspector-scrim" id="inspectorScrim" hidden></div>
+    <aside class="inspector" id="recordInspector" hidden aria-labelledby="inspectorTitle">
+      <div class="inspector-head">
+        <div class="grow">
+          <h3 class="inspector-title" id="inspectorTitle">Paper</h3>
+          <div class="inspector-authors" id="inspectorAuthors"></div>
+        </div>
+        <div class="inspector-nav">
+          <button id="btnInspectorPrev" class="icon" title="Previous paper" aria-label="Previous paper">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>
+          </button>
+          <button id="btnInspectorNext" class="icon" title="Next paper" aria-label="Next paper">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+          </button>
+          <button id="btnInspectorClose" class="icon" title="Close inspector" aria-label="Close inspector">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="inspector-body">
+        <div class="inspector-section">
+          <div id="inspectorBadges"></div>
+          <dl class="meta-list" id="inspectorMeta"></dl>
+          <div class="inspector-actions">
+            <button id="btnDetailOpenLink">Open source</button>
+            <button id="btnDetailOpenPdf">Open PDF</button>
+            <button id="btnDetailCopyDoi">Copy DOI</button>
+            <button id="btnDetailCopyTitle">Copy title</button>
+          </div>
+        </div>
+
+        <div class="inspector-section">
+          <h4>Screening</h4>
+          <div class="field">
+            <label for="detailDecision">Decision</label>
+            <select id="detailDecision">
+              <option value="">Undecided</option>
+              <option value="include">Include</option>
+              <option value="exclude">Exclude</option>
+              <option value="maybe">Maybe</option>
+            </select>
+          </div>
+          <div class="field" id="detailReasonField" hidden>
+            <label for="detailReason">Exclusion reason</label>
+            <input type="text" id="detailReason" placeholder="Coded exclusion reason" />
+          </div>
+          <div class="field">
+            <label for="detailTags">Tags</label>
+            <input type="text" id="detailTags" placeholder="comma separated" />
+            <span class="notice" id="detailTagPreview"></span>
+          </div>
+          <div class="field">
+            <label for="detailNote">Notes</label>
+            <textarea id="detailNote" placeholder="Add your review notes…"></textarea>
+          </div>
+        </div>
+
+        <div class="inspector-section">
+          <h4>Abstract</h4>
+          <div class="inspector-actions">
+            <button id="btnDetailAbstract">Load abstract</button>
+          </div>
+          <pre class="detail" id="inspectorAbstractText" hidden></pre>
+        </div>
+
+        <div class="inspector-section">
+          <h4>Citation graph</h4>
+          <div class="inspector-actions">
+            <button id="menuCiteForward">Works citing this paper</button>
+            <button id="menuCiteBackward">Works this paper cites</button>
+          </div>
+          <p class="notice" id="inspectorTrend"></p>
+        </div>
+
+        <div class="inspector-section">
+          <h4>Full metadata</h4>
+          <pre class="detail" id="detailText"></pre>
+        </div>
+      </div>
+      <div class="inspector-foot">
+        <span class="dirty-flag" id="inspectorDirty" hidden>Unsaved changes</span>
+        <span class="grow"></span>
+        <button id="btnDetailSaveReview" class="primary">Save review</button>
+      </div>
+    </aside>
   </div>
 
-  <div class="header">
-    <div class="titles">
-      <h1>Google Scholar Scraper v4.0.2</h1>
-      <div class="subtitle">Search, rank, review, and export Scholar results.</div>
-    </div>
-    <button id="btnCancel" disabled>Cancel</button>
-    <select id="themeSelect" title="Interface theme">
-      <option value="system">Theme: system</option>
-      <option value="light">Theme: light</option>
-      <option value="dark">Theme: dark</option>
-    </select>
-    <button id="btnSearch" class="primary">Search Scholar</button>
-  </div>
-
-  <section class="panel" id="configPanel">
-    <div class="panel-head">
-      <button id="btnToggleConfig" aria-expanded="true" aria-controls="configPanel">Filters \u25be</button>
-      <span class="notice" id="configHint">Search setup, ranking file, and year range.</span>
-    </div>
-    <div class="row">
-      <label for="query">Query</label>
-      <input type="text" id="query" style="flex:1" list="queryHistory" />
-      <datalist id="queryHistory"></datalist>
-      <label for="pages">Pages</label>
-      <input type="text" id="pages" class="small" value="1" />
-    </div>
-    <div class="row">
-      <label for="folder">Export folder</label>
-      <input type="text" id="folder" style="flex:1" />
-      <button id="btnBrowse">Browse</button>
-    </div>
-    <div class="row">
-      <label for="rankingPath">Ranking file</label>
-      <input type="text" id="rankingPath" style="flex:1" />
-      <label for="rankingYear">Rank year</label>
-      <input type="text" id="rankingYear" class="small" />
-      <button id="btnImport">Import</button>
-      <button id="btnGapReport" title="List journals with no imported ranking match">Unranked gaps</button>
-      <span class="toolbar-group">
-        <label>Screen</label>
-        <button id="btnInclude" title="Mark selected rows as included">Include</button>
-        <button id="btnExclude" title="Mark selected rows as excluded">Exclude</button>
-        <button id="btnMaybe" title="Mark selected rows as maybe">Maybe</button>
-      </span>
-      <button id="btnReviewMenu">Review…</button>
-      <div class="menu" id="reviewMenu">
-        <button id="menuPrisma">PRISMA counts</button>
-        <button id="menuScreeningLog">Export screening log (CSV)</button>
-        <button id="menuNearDup">Near-duplicate report</button>
-        <button id="menuBaselineSave">Save current set as baseline…</button>
-        <button id="menuBaselineDiff">Diff against baseline…</button>
-        <button id="menuRescore">Re-score with the query…</button>
-        <button id="menuImportExport">Import a CSV/JSON export…</button>
-        <button id="menuPasteDois">Add records by pasting DOIs…</button>
-        <button id="menuCiteForward">Find works citing this DOI</button>
-        <button id="menuCiteBackward">Find works this DOI cites</button>
+  <!-- ---------- filters popover ---------- -->
+  <div class="popover" id="filtersPopover" role="dialog" aria-label="Result filters" hidden>
+    <div class="pop-fields">
+      <div class="field">
+        <label for="pdfFilter">PDF status</label>
+        <select id="pdfFilter"></select>
+      </div>
+      <div class="field">
+        <label for="decisionFilter">Decision</label>
+        <select id="decisionFilter">
+          <option value="all">All</option>
+          <option value="undecided">Undecided</option>
+          <option value="include">Included</option>
+          <option value="exclude">Excluded</option>
+          <option value="maybe">Maybe</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="tagFilter">Tag contains</label>
+        <input type="text" id="tagFilter" placeholder="any tag" title="Show only rows carrying this tag" />
+      </div>
+      <div class="field">
+        <label for="savedFilters">Saved filters</label>
+        <select id="savedFilters"><option value="">saved filters…</option></select>
       </div>
     </div>
-    <div class="row">
-      <label><input type="checkbox" id="rankingEnabled" checked /> Rank by relevance (local scoring)</label>
-      <span id="rankingNotice" class="notice">No ranks imported.</span>
-    </div>
-    <div class="row">
-      <label for="yearPreset">Published</label>
-      <select id="yearPreset"></select>
-      <label for="yearFrom">From</label>
-      <input type="text" id="yearFrom" class="small" />
-      <label for="yearTo">To</label>
-      <input type="text" id="yearTo" class="small" />
-    </div>
-  </section>
-
-  <div class="panel status ready" id="statusPanel" role="status" aria-live="polite">
-    <div>
-      <div class="heading" id="statusHeading">Ready</div>
-      <div class="detail" id="statusDetail">Enter a query, choose pages, then start a search.</div>
-    </div>
-    <progress id="progress" value="0" max="100"></progress>
-    <button id="btnRetry" hidden>Retry search</button>
-  </div>
-
-  <div class="results">
-    <div class="results-toolbar">
-      <h2>Results</h2>
-      <span class="summary" id="summary">No search has run yet.</span>
-      <input type="text" id="resultsSearch" class="filter" placeholder="Filter results…" />
-      <span class="spacer"></span>
-      <button id="btnReveal" hidden>Open folder</button>
-      <button id="btnCheck" disabled>Check metadata / PDFs</button>
-      <button id="btnMetadataOnly" disabled title="Refresh Crossref metadata without re-checking every PDF link">Refresh metadata only</button>
-      <button id="btnDownload" disabled>Download selected PDFs</button>
-      <button id="btnDetails" disabled>Details</button>
-    </div>
-    <div class="results-toolbar">
-      <label for="pdfFilter">PDF filter</label>
-      <select id="pdfFilter"></select>
-      <label for="decisionFilter">Decision</label>
-      <select id="decisionFilter" title="Filter by your screening decision">
-        <option value="all">All</option>
-        <option value="undecided">Undecided</option>
-        <option value="include">Included</option>
-        <option value="exclude">Excluded</option>
-        <option value="maybe">Maybe</option>
-      </select>
-      <label for="tagFilter">Tag</label>
-      <input type="text" id="tagFilter" class="smallwide" placeholder="any tag" title="Show only rows carrying this tag" />
+    <div class="pop-actions">
       <button id="btnSaveFilter" title="Save the current filter combination under a name">Save filter…</button>
-      <select id="savedFilters" title="Apply a saved filter">
-        <option value="">saved filters…</option>
-      </select>
-      <span id="appliedYear">Years: any time</span>
-      <span class="notice" id="columnLegend" title="Index and Rank describe the journal; relevance orders the rows; Cited counts references">Index/Rank = journal · Cited = references</span>
-      <span id="yearHistogram" class="summary" title="Publication-year distribution of the stored records"></span>
-      <span class="spacer"></span>
-      <span class="toolbar-group">
-        <label for="citeStyle">Cite as</label>
-        <select id="citeStyle">
-          <option value="apa">APA</option>
-          <option value="ieee">IEEE</option>
-          <option value="vancouver">Vancouver</option>
-        </select>
-      </span>
-      <span class="toolbar-group">
-        <label for="exportScope">Export</label>
-        <select id="exportScope">
-          <option value="visible">Visible (filtered) rows</option>
-          <option value="selected">Selected rows</option>
-        </select>
-      </span>
-      <button id="btnExportMenu">More export…</button>
-      <div class="menu" id="exportMenu">
-        <button id="menuExcelRich">Excel (formatted, freeze + filters)</button>
-        <button id="menuExcelGrouped">Excel grouped by →</button>
-        <button id="menuJson">JSON</button>
-        <button id="menuMarkdown">Markdown table</button>
-        <button id="menuTsv">TSV</button>
-        <button id="menuEnw">EndNote (.enw)</button>
-        <button id="menuReadingList">HTML reading list</button>
-        <button id="menuJournals">Journal aggregation (CSV)</button>
-        <button id="menuDetails">Details text</button>
-        <button id="menuCsl">CSL-JSON citations</button>
-        <button id="menuBibStable">BibTeX (stable keys)</button>
-        <button id="menuBibFiles">BibTeX (with PDF paths)</button>
-        <button id="menuGroupedBib">Grouped bibliography</button>
-        <button id="menuCopyBib">Copy bibliography to clipboard</button>
-      </div>
-      <button id="btnResetSort" title="Return to Google Scholar’s original order">Scholar order</button>
-      <button id="btnColumns">Columns</button>
-      <div class="menu" id="columnsMenu">
-        <label><input type="checkbox" data-col="authors" checked /> Authors</label>
-        <label><input type="checkbox" data-col="index" checked /> Index</label>
-        <label><input type="checkbox" data-col="rank" checked /> Rank</label>
-        <label><input type="checkbox" data-col="pdf" checked /> PDF</label>
-        <label><input type="checkbox" data-col="link" checked /> Link</label>
-        <label><input type="checkbox" data-col="cited" checked /> Cited by</label>
-        <label><input type="checkbox" data-col="oa" checked /> OA status</label>
-        <label><input type="checkbox" data-col="decision" checked /> Decision</label>
-        <label><input type="checkbox" data-col="tags" checked /> Tags</label>
-      </div>
-      <label class="notice"><input type="checkbox" id="compactRows" /> Compact</label>
-      <span class="toolbar-group">
-        <label for="groupBy">Group</label>
-        <select id="groupBy">
-          <option value="">None</option>
-          <option value="year">Year</option>
-          <option value="journal">Journal</option>
-          <option value="pdf">PDF status</option>
-        </select>
-      </span>
-      <button id="btnExportExcel" disabled title="Export visible (filtered) rows">Excel (visible)</button>
-      <button id="btnExportCsv" disabled title="Export visible (filtered) rows">CSV (visible)</button>
-      <button id="btnExportCitations" disabled>Citations</button>
-    </div>
-    <div class="table-wrap" id="tableWrap">
-      <table id="resultsTable" tabindex="0" role="grid" aria-label="Search results">
-        <colgroup>
-          <col data-col="title" style="width:32%" />
-          <col data-col="authors" style="width:24%" />
-          <col data-col="index" style="width:11%" />
-          <col data-col="rank" style="width:10%" />
-          <col data-col="pdf" style="width:12%" />
-          <col data-col="link" style="width:11%" />
-          <col data-col="cited" style="width:6%" />
-          <col data-col="oa" style="width:7%" />
-          <col data-col="decision" style="width:8%" />
-          <col data-col="tags" style="width:10%" />
-        </colgroup>
-        <thead>
-          <tr>
-            <th class="sortable" data-key="title" scope="col" aria-sort="none" title="Sort by title">Title</th>
-            <th class="sortable" data-key="authors" scope="col" aria-sort="none" title="Sort by authors">Authors</th>
-            <th class="sortable" data-key="index" scope="col" aria-sort="none" title="Sort by journal indexing (SJR, SINTA, SCOPUS)">Index</th>
-            <th class="sortable" data-key="rank" scope="col" aria-sort="none" title="Sort by journal rank">Rank</th>
-            <th class="sortable" data-key="pdf" scope="col" aria-sort="none" title="Sort by public-PDF status">PDF</th>
-            <th class="sortable" data-key="link" scope="col" aria-sort="none" title="Sort by link presence">Link</th>
-            <th class="sortable" data-key="cited" scope="col" aria-sort="none" title="Sort by citation count (Crossref / OpenAlex)">Cited</th>
-            <th class="sortable" data-key="oa" scope="col" aria-sort="none" title="Open-access status reported by OpenAlex">OA</th>
-            <th class="sortable" data-key="decision" scope="col" aria-sort="none" title="Your screening decision">Decision</th>
-            <th class="sortable" data-key="tags" scope="col" aria-sort="none" title="Tags you assigned">Tags</th>
-          </tr>
-        </thead>
-        <tbody id="tableBody" role="rowgroup"></tbody>
-      </table>
-    </div>
-    <div class="empty" id="emptyState">
-      <div class="title" id="emptyTitle">No results yet</div>
-      <div id="emptyDetail">Run a search to review Google Scholar results here.</div>
-      <button id="btnClearFilters" hidden>Clear result filters</button>
+      <button id="btnClearFilters">Clear filters</button>
     </div>
   </div>
+
+  <!-- ---------- view menu ---------- -->
+  <div class="menu" id="columnsMenu" role="menu" aria-label="View options" hidden>
+    <div class="menu-heading">Columns</div>
+    <label><input type="checkbox" data-col="authors" checked /> Authors</label>
+    <label><input type="checkbox" data-col="index" checked /> Index</label>
+    <label><input type="checkbox" data-col="rank" checked /> Rank</label>
+    <label><input type="checkbox" data-col="pdf" checked /> PDF</label>
+    <label><input type="checkbox" data-col="link" checked /> Link</label>
+    <label><input type="checkbox" data-col="cited" checked /> Cited by</label>
+    <label><input type="checkbox" data-col="oa" checked /> OA status</label>
+    <label><input type="checkbox" data-col="decision" checked /> Decision</label>
+    <label><input type="checkbox" data-col="tags" checked /> Tags</label>
+    <hr />
+    <label><input type="checkbox" id="compactRows" /> Compact rows</label>
+    <button id="btnResetSort" role="menuitem">Restore Scholar order</button>
+    <hr />
+    <div class="menu-heading">Reading guide</div>
+    <p class="notice" id="columnLegend" style="padding:0 10px 6px">Index/Rank describe the journal · Cited counts references</p>
+    <p class="notice" id="yearHistogram" style="padding:0 10px 6px"></p>
+  </div>
+
+  <!-- ---------- dialogs ---------- -->
+  <dialog id="settingsDialog">
+    <h3>Settings</h3>
+    <p class="dialog-sub">Preferences persist between launches in your app data folder.</p>
+    <div class="dialog-body">
+      <div class="field">
+        <label for="themeSelect">Theme</label>
+        <select id="themeSelect">
+          <option value="system">System</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
+      <div class="grid-2">
+        <div class="field">
+          <label for="rankingPath">Ranking file</label>
+          <input type="text" id="rankingPath" />
+        </div>
+        <div class="field">
+          <label for="rankingYear">Rank year</label>
+          <input type="text" id="rankingYear" class="w-md" inputmode="numeric" />
+        </div>
+      </div>
+      <div class="inspector-actions">
+        <button id="btnImport">Import rankings</button>
+        <span class="notice" id="rankingNotice">No ranks imported.</span>
+      </div>
+    </div>
+    <div class="dialog-actions">
+      <button id="btnCloseSettings" class="primary">Done</button>
+    </div>
+  </dialog>
+
+  <dialog id="exportDialog">
+    <h3>Export</h3>
+    <p class="dialog-sub" id="exportSummary">Choose a format and scope.</p>
+    <div class="dialog-body">
+      <div class="field">
+        <label for="exportFormat">Format</label>
+        <select id="exportFormat">
+          <optgroup label="Spreadsheet">
+            <option value="csv">CSV (20 columns)</option>
+            <option value="excel">Excel — formatted</option>
+          </optgroup>
+          <optgroup label="Citations">
+            <option value="bibtex">BibTeX (.bib)</option>
+            <option value="ris">RIS (.ris)</option>
+            <option value="csl-json">CSL-JSON</option>
+            <option value="bibtex-stable">BibTeX with stable keys</option>
+            <option value="bibtex-files">BibTeX with PDF paths</option>
+            <option value="grouped">Grouped bibliography (Markdown)</option>
+            <option value="clipboard">Copy references to clipboard</option>
+          </optgroup>
+          <optgroup label="Other formats">
+            <option value="json">JSON</option>
+            <option value="markdown">Markdown table</option>
+            <option value="tsv">TSV</option>
+            <option value="enw">EndNote (.enw)</option>
+            <option value="reading-list">HTML reading list</option>
+            <option value="journals">Journal aggregation (CSV)</option>
+            <option value="details">Details text</option>
+          </optgroup>
+        </select>
+      </div>
+      <div class="field">
+        <label for="exportScope">Papers</label>
+        <select id="exportScope">
+          <option value="visible">Filtered papers</option>
+          <option value="selected">Selected papers</option>
+          <option value="all">All collected papers</option>
+        </select>
+      </div>
+      <div class="grid-2" id="exportStyleFields">
+        <div class="field">
+          <label for="citeStyle">Citation style</label>
+          <select id="citeStyle">
+            <option value="apa">APA</option>
+            <option value="ieee">IEEE</option>
+            <option value="vancouver">Vancouver</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="groupBy">Group by</label>
+          <select id="groupBy">
+            <option value="">None</option>
+            <option value="year">Year</option>
+            <option value="journal">Journal</option>
+            <option value="pdf">PDF status</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="folder">Destination folder</label>
+        <div class="toolbar">
+          <input type="text" id="folder" style="flex:1" />
+          <button id="btnBrowse">Browse…</button>
+        </div>
+      </div>
+      <p class="notice" id="exportNote"></p>
+    </div>
+    <div class="dialog-actions">
+      <button id="btnCloseExport">Close</button>
+      <button id="btnDoExport" class="primary">Export</button>
+    </div>
+  </dialog>
+
+  <dialog id="reportDialog">
+    <h3 id="reportTitle">Report</h3>
+    <pre class="report" id="reportText"></pre>
+    <div class="dialog-actions">
+      <button id="btnCloseReport" class="primary">Close</button>
+    </div>
+  </dialog>
 
   <dialog id="errorDialog">
     <h3 id="errorTitle">Error</h3>
-    <pre id="errorDetail"></pre>
-    <button id="btnErrorClose" class="primary">OK</button>
-  </dialog>
-
-  <dialog id="detailDialog">
-    <h3>Selected paper details</h3>
-    <pre id="detailText"></pre>
-    <div class="disclaimer">Double-click a row to open its link. Ranking labels describe the journal only.</div>
-    <div class="row">
-      <label for="detailDecision">Decision</label>
-      <select id="detailDecision">
-        <option value="">undecided</option>
-        <option value="include">include</option>
-        <option value="exclude">exclude</option>
-        <option value="maybe">maybe</option>
-      </select>
-      <label for="detailReason">Reason</label>
-      <input type="text" id="detailReason" class="smallwide" placeholder="coded exclusion reason" />
-    </div>
-    <div class="row">
-      <label for="detailTags">Tags</label>
-      <input type="text" id="detailTags" class="smallwide" placeholder="comma separated" />
-      <label for="detailNote">Note</label>
-      <input type="text" id="detailNote" style="flex:1" />
-      <button id="btnDetailSaveReview" class="primary">Save review</button>
-    </div>
-    <div class="row">
-      <button id="btnDetailOpenLink">Open link</button>
-      <button id="btnDetailAbstract">Abstract</button>
-      <button id="btnDetailOpenPdf">Open PDF</button>
-      <button id="btnDetailCopyDoi">Copy DOI</button>
-      <button id="btnDetailCopyTitle">Copy title</button>
-      <span class="spacer"></span>
-      <button id="btnCloseDetail">Close</button>
-    </div>
-  </dialog>
-
-  <dialog id="pasteDialog">
-    <h3>Add records by pasting DOIs</h3>
-    <div class="disclaimer">One per line, or separated by commas. Accepts bare DOIs, <code>doi:</code> prefixes and full <code>https://doi.org/…</code> links.</div>
-    <div class="row">
-      <textarea id="pasteDois" rows="8" style="flex:1;font:inherit;border:1px solid var(--border-strong);border-radius:4px;padding:6px"></textarea>
-    </div>
-    <div class="row">
-      <button id="btnPasteDoisOk" class="primary">Add records</button>
-      <button id="btnPasteDoisCancel">Cancel</button>
+    <pre class="report" id="errorDetail"></pre>
+    <div class="dialog-actions">
+      <button id="btnErrorClose" class="primary">OK</button>
     </div>
   </dialog>
 
   <dialog id="promptDialog">
     <h3 id="promptTitle">Enter a value</h3>
-    <div class="row">
-      <input type="text" id="promptInput" style="flex:1" />
+    <div class="dialog-body">
+      <input type="text" id="promptInput" />
     </div>
-    <div class="row">
-      <button id="btnPromptOk" class="primary">OK</button>
+    <div class="dialog-actions">
       <button id="btnPromptCancel">Cancel</button>
+      <button id="btnPromptOk" class="primary">OK</button>
     </div>
   </dialog>
 
-  <dialog id="abstractDialog">
-    <h3 id="abstractTitle">Abstract</h3>
-    <pre id="abstractText"></pre>
-    <div class="disclaimer">The abstract comes from Crossref or OpenAlex, not from Google Scholar. It is shown as the provider returns it.</div>
-    <button id="btnCloseAbstract">Close</button>
+  <dialog id="pasteDialog">
+    <h3>Add records by pasting DOIs</h3>
+    <p class="dialog-sub">One per line, or separated by commas. Accepts bare DOIs, <code>doi:</code> prefixes and full <code>https://doi.org/…</code> links.</p>
+    <div class="dialog-body">
+      <textarea id="pasteDois" rows="8"></textarea>
+    </div>
+    <div class="dialog-actions">
+      <button id="btnPasteDoisCancel">Cancel</button>
+      <button id="btnPasteDoisOk" class="primary">Add records</button>
+    </div>
   </dialog>
 
-  <dialog id="citationsDialog">
-    <h3>Export citations</h3>
-    <div class="row">
-      <label>Citation format</label>
-      <label><input type="radio" name="citFormat" value="bibtex" checked /> BibTeX (.bib)</label>
-      <label><input type="radio" name="citFormat" value="ris" /> RIS (.ris)</label>
-    </div>
-    <div class="row">
-      <label>Which records</label>
-      <label><input type="radio" name="citScope" value="selected" /> Selected rows</label>
-      <label><input type="radio" name="citScope" value="visible" checked /> Visible (filtered) rows</label>
-      <label><input type="radio" name="citScope" value="all" /> All collected records</label>
-    </div>
-    <div class="disclaimer">Records are resolved against Crossref when possible. Unresolved records keep their known fields and carry a review note; no PDF field is consulted.</div>
-    <div class="row">
-      <button id="btnDoExport" class="primary">Export citations</button>
-      <button id="btnCloseCitations">Close</button>
+  <dialog id="unsavedReviewDialog">
+    <h3>Unsaved review changes</h3>
+    <p class="dialog-sub" id="unsavedDetail">You have review edits that have not been saved.</p>
+    <div class="dialog-actions">
+      <button id="btnUnsavedKeep">Keep editing</button>
+      <button id="btnUnsavedDiscard" class="danger">Discard changes</button>
+      <button id="btnUnsavedSave" class="primary">Save and continue</button>
     </div>
   </dialog>
 
