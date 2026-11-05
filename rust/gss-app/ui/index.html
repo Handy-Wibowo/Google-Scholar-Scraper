@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Google Scholar Scraper v4.0.0</title>
+  <title>Google Scholar Scraper v4.0.1</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -202,7 +202,7 @@
 
   <div class="header">
     <div class="titles">
-      <h1>Google Scholar Scraper v4.0.0</h1>
+      <h1>Google Scholar Scraper v4.0.1</h1>
       <div class="subtitle">Search, rank, review, and export Scholar results.</div>
     </div>
     <button id="btnCancel" disabled>Cancel</button>
@@ -296,6 +296,20 @@
     <div class="results-toolbar">
       <label for="pdfFilter">PDF filter</label>
       <select id="pdfFilter"></select>
+      <label for="decisionFilter">Decision</label>
+      <select id="decisionFilter" title="Filter by your screening decision">
+        <option value="all">All</option>
+        <option value="undecided">Undecided</option>
+        <option value="include">Included</option>
+        <option value="exclude">Excluded</option>
+        <option value="maybe">Maybe</option>
+      </select>
+      <label for="tagFilter">Tag</label>
+      <input type="text" id="tagFilter" class="smallwide" placeholder="any tag" title="Show only rows carrying this tag" />
+      <button id="btnSaveFilter" title="Save the current filter combination under a name">Save filter…</button>
+      <select id="savedFilters" title="Apply a saved filter">
+        <option value="">saved filters…</option>
+      </select>
       <span id="appliedYear">Years: any time</span>
       <span class="notice" id="columnLegend" title="Index and Rank describe the journal; relevance orders the rows; Cited counts references">Index/Rank = journal · Cited = references</span>
       <span id="yearHistogram" class="summary" title="Publication-year distribution of the stored records"></span>

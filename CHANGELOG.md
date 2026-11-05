@@ -1,5 +1,27 @@
 # Changelog
 
+## 4.0.1
+
+Normal release of the
+[Handy-Wibowo fork](https://github.com/Handy-Wibowo/Google-Scholar-Scraper),
+published at the
+[v4.0.1 release page](https://github.com/Handy-Wibowo/Google-Scholar-Scraper/releases/tag/v4.0.1).
+
+Completes two roadmap items that v3.6.0 left out when the rest of the review phase
+shipped.
+
+### Added
+
+- **Filter the table by screening decision** — All / Undecided / Included /
+  Excluded / Maybe. Verified: 30 rows → 2 excluded → 1 included.
+- **Filter by tag** — free-text match over a record's tags.
+- **Saved filter expressions** — store the current combination (PDF filter,
+  decision, tag, and text query) under a name and re-apply it in one step. Saved
+  filters, and the active decision/tag filters, persist between launches.
+
+The "Clear result filters" button and the empty-state prompt now cover the review
+filters too, not just the PDF and text filters.
+
 ## 4.0.0
 
 Normal release of the

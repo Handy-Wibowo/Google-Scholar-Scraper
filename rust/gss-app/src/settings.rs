@@ -9,6 +9,16 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// One named filter combination (`saved_filters`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SavedFilter {
+    pub pdf: String,
+    pub decision: String,
+    pub tag: String,
+    pub query: String,
+}
+
 /// One UI settings snapshot; field defaults are the shipped window defaults.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -38,6 +48,13 @@ pub struct UiSettings {
     pub schema_version: u32,
     /// Interface theme: "system", "light" or "dark" (5.11).
     pub theme: String,
+    /// Screening filter: all | undecided | include | exclude | maybe (2.1).
+    pub decision_filter: String,
+    /// Free-text tag filter (2.2).
+    pub tag_filter: String,
+    /// Named filter combinations (2.8): name -> {pdf, decision, tag, query}.
+    pub saved_filters: std::collections::BTreeMap<String, SavedFilter>,
+
     /// Window geometry (7.1): restored on launch so the window comes back where
     /// the user left it. Zero means "never saved".
     pub window_x: i32,
@@ -70,6 +87,9 @@ impl Default for UiSettings {
             query_history: Vec::new(),
             schema_version: SCHEMA_VERSION,
             theme: "system".to_string(),
+            decision_filter: "all".to_string(),
+            tag_filter: String::new(),
+            saved_filters: Default::default(),
             window_x: 0,
             window_y: 0,
             window_w: 0,
@@ -418,6 +438,9 @@ mod tests {
             query_history: vec!["machine learning".into(), "graph neural networks".into()],
             schema_version: SCHEMA_VERSION,
             theme: "dark".into(),
+            decision_filter: "include".into(),
+            tag_filter: "theory".into(),
+            saved_filters: Default::default(),
             window_x: 120,
             window_y: 80,
             window_w: 1280,

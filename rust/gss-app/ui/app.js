@@ -78,6 +78,9 @@ let detailIndex = -1; // record shown in the details dialog
 let queryHistory = []; // recent successful queries, newest first
 let historyCursor = -1; // recall position inside queryHistory
 let hiddenColumns = new Set(); // column keys hidden by the Columns menu
+let decisionFilter = "all"; // all | undecided | include | exclude | maybe
+let tagFilter = ""; // free-text tag match
+let savedFilters = {}; // name -> {pdf, decision, tag, query}
 const ALL_COLUMNS = ["title", "authors", "index", "rank", "pdf", "link", "cited", "oa", "decision", "tags"];
 
 const $ = (id) => document.getElementById(id);
@@ -161,6 +164,20 @@ function init() {
   $("btnMetadataOnly").onclick = () => checkMetadataPdfs(true);
   $("btnGapReport").onclick = showGapReport;
   $("btnClearFilters").onclick = clearResultFilters;
+  $("decisionFilter").onchange = () => {
+    decisionFilter = $("decisionFilter").value;
+    renderResults();
+  };
+  $("tagFilter").oninput = () => {
+    tagFilter = $("tagFilter").value;
+    scheduleResultsRender();
+  };
+  $("btnSaveFilter").onclick = saveCurrentFilter;
+  $("savedFilters").onchange = () => {
+    const name = $("savedFilters").value;
+    if (name && savedFilters[name]) applyFilter(savedFilters[name]);
+    $("savedFilters").value = "";
+  };
   $("btnResetSort").onclick = resetSort;
   $("themeSelect").onchange = () => {
     applyTheme($("themeSelect").value);
@@ -835,11 +852,26 @@ async function exportSpreadsheet(kind) {
 }
 
 // ---- table rendering (iid = article-{storedIndex}) ----
+/// True when the record passes the decision/tag filters.
+function passesReviewFilters(a) {
+  if (decisionFilter !== "all") {
+    const decision = decisionLabel(a) || "undecided";
+    if (decision !== decisionFilter) return false;
+  }
+  const wanted = tagFilter.trim().toLocaleLowerCase();
+  if (wanted) {
+    const tags = (reviewEntry(a).tags || []).map((t) => t.toLocaleLowerCase());
+    if (!tags.some((t) => t.includes(wanted))) return false;
+  }
+  return true;
+}
+
 function filteredArticles() {
   const needle = resultsQuery.toLocaleLowerCase();
   const rows = storedArticles
     .map((a, i) => [i, a])
     .filter(([, a]) => {
+      if (!passesReviewFilters(a)) return false;
       if (pdfFilter !== "All") {
         const want = pdfFilter === "Public PDF available" ? "available"
           : pdfFilter === "No public PDF found" ? "unavailable" : "unknown";
@@ -944,7 +976,9 @@ function renderResults() {
   $("emptyState").classList.toggle("hidden", rows.length > 0);
   if (rows.length === 0) {
     if (hasAny) {
-      $("btnClearFilters").hidden = !(pdfFilter !== "All" || resultsQuery !== "");
+      $("btnClearFilters").hidden = !(
+        pdfFilter !== "All" || resultsQuery !== "" || decisionFilter !== "all" || tagFilter.trim() !== ""
+      );
       $("emptyTitle").textContent = "No papers match this filter";
       $("emptyDetail").textContent = resultsQuery
         ? "Clear the results filter or the PDF filter to see the stored records. Filtering never removes stored results."
@@ -999,6 +1033,10 @@ function clearResultFilters() {
   $("resultsSearch").value = "";
   $("pdfFilter").value = "All";
   pdfFilter = "All";
+  decisionFilter = "all";
+  $("decisionFilter").value = "all";
+  tagFilter = "";
+  $("tagFilter").value = "";
   renderResults();
   setIdleState();
 }
@@ -1006,7 +1044,7 @@ function clearResultFilters() {
 function refreshSummary() {
   const rows = filteredArticles();
   const total = storedArticles.length;
-  const filtering = pdfFilter !== "All" || resultsQuery !== "";
+  const filtering = pdfFilter !== "All" || resultsQuery !== "" || decisionFilter !== "all" || tagFilter.trim() !== "";
   let text;
   if (total === 0 || !filtering) {
     text = summaryBase;
@@ -1881,6 +1919,50 @@ async function citationChase(direction) {
   }
 }
 
+// ---- saved filter expressions (2.8) ----
+function currentFilter() {
+  return {
+    pdf: $("pdfFilter").value || "All",
+    decision: decisionFilter,
+    tag: tagFilter,
+    query: resultsQuery,
+  };
+}
+
+function applyFilter(filter) {
+  if (!filter) return;
+  $("pdfFilter").value = filter.pdf || "All";
+  pdfFilter = $("pdfFilter").value;
+  decisionFilter = filter.decision || "all";
+  $("decisionFilter").value = decisionFilter;
+  tagFilter = filter.tag || "";
+  $("tagFilter").value = tagFilter;
+  resultsQuery = filter.query || "";
+  $("resultsSearch").value = resultsQuery;
+  renderResults();
+  setIdleState();
+}
+
+function renderSavedFilters() {
+  const select = $("savedFilters");
+  select.innerHTML = '<option value="">saved filters…</option>';
+  for (const name of Object.keys(savedFilters).sort()) {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    select.appendChild(option);
+  }
+}
+
+async function saveCurrentFilter() {
+  const name = await askText("Save this filter as", "");
+  if (!name) return;
+  savedFilters[name] = currentFilter();
+  renderSavedFilters();
+  scheduleSave();
+  setStatus("Filter saved", `Saved "${name}".`, "success");
+}
+
 // ---- retry ----
 function retryLastSearch() {
   if (running || !lastRequest) return;
@@ -1982,6 +2064,9 @@ function collectSettings() {
     hidden_columns: [...hiddenColumns],
     query_history: queryHistory,
     theme: $("themeSelect") ? $("themeSelect").value : "system",
+    decision_filter: decisionFilter,
+    tag_filter: tagFilter,
+    saved_filters: savedFilters,
   };
 }
 
@@ -2052,6 +2137,12 @@ async function loadSettings() {
     /* no catalog is a normal first run */
   }
   applyTheme(saved.theme || "system");
+  decisionFilter = saved.decision_filter || "all";
+  if ($("decisionFilter")) $("decisionFilter").value = decisionFilter;
+  tagFilter = saved.tag_filter || "";
+  if ($("tagFilter")) $("tagFilter").value = tagFilter;
+  savedFilters = saved.saved_filters || {};
+  renderSavedFilters();
   // 7.1: restore the window's size and position from the last session.
   invoke("restore_window_geometry").catch(() => {});
   await loadReviewProject();
