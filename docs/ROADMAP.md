@@ -7,6 +7,11 @@ Companion to [`CAPABILITY-BACKLOG.md`](CAPABILITY-BACKLOG.md). The backlog lists
 **Totals:** 109 capabilities · ≈119.5 person-days · 8 phases · 7 releases
 (v3.3.1 → v4.0.0).
 
+**Delivery status.** P0, P1, P2 and P3 shipped in full (P2 minus 1.6). P4 and P5
+shipped partially, P6 partially, P7 partially; the remainder is listed per phase
+below and is **not** implemented. Three backlog entries were found to be already
+correct on inspection (6.12) or blocked by a parity contract (4.7).
+
 Effort key (from the backlog): **S** ≈ ½ day · **M** ≈ 1.5 days · **L** ≈ 4 days.
 These are estimates, not measurements.
 
@@ -32,6 +37,8 @@ P2/P3, so they can be done in either order or in parallel.
 ---
 
 ## P0 — Foundations · `v3.3.1`
+
+**Shipped in full** — v3.3.1.
 
 **Goal:** make every later phase debuggable and stop the app from wedging itself.
 
@@ -60,6 +67,8 @@ clippy, fmt and the four parity gates stay green.
 
 ## P1 — Free metadata · `v3.4.0`
 
+**Shipped in full** (excluding 4.7, reverted) — v3.4.0.
+
 **Goal:** spend zero extra network. Every item here reads payloads the app already
 fetches, or performs one bounded lookup.
 
@@ -86,6 +95,8 @@ columns go to Excel-only or a separate writer.
 ---
 
 ## P2 — Export & interchange · `v3.5.0`
+
+**Shipped** except 1.6, which needs per-record user state (the P3 container) — v3.5.0.
 
 **Goal:** make the output usable without post-processing.
 
@@ -119,6 +130,8 @@ Anything that changes CSV/BibTeX/RIS bytes must be a **new writer**, not an edit
 
 ## P3 — Review state · `v3.6.0`
 
+**Shipped in full** — v3.6.0.
+
 **Goal:** hold the reviewer's decisions, not just the metadata.
 
 | # | Capability | Effort |
@@ -143,6 +156,8 @@ Anything that changes CSV/BibTeX/RIS bytes must be a **new writer**, not an edit
 
 ## P4 — Interface polish · `v3.7.0`
 
+**Shipped** 5.1, 5.2, 5.5, 5.8, 5.11. Not done: 5.3, 5.4, 5.6, 5.7, 5.9, 5.10.
+
 | # | Capability | Effort |
 |---|---|---|
 | 5.1 | Keep last good results until a replacement search succeeds | M |
@@ -159,6 +174,8 @@ Anything that changes CSV/BibTeX/RIS bytes must be a **new writer**, not an edit
 ---
 
 ## P5 — Reliability hardening · `v3.7.0`
+
+**Shipped** 6.20 only. 6.12 was already correct. The rest is open.
 
 | # | Capability | Effort |
 |---|---|---|
@@ -187,6 +204,8 @@ Anything that changes CSV/BibTeX/RIS bytes must be a **new writer**, not an edit
 ---
 
 ## P6 — Platform integration · `v3.8.0`
+
+**Shipped** 7.1 and 7.10. The rest needs new plugins, build features, or out-of-band work.
 
 | # | Capability | Effort | Lead time |
 |---|---|---|---|
@@ -218,6 +237,8 @@ change cannot reach any of it.
 ---
 
 ## P7 — Discovery expansion · `v4.0.0`
+
+**Shipped** 1.7 and 4.1. Not done: 4.2, 4.5, 4.6.
 
 | # | Capability | Effort |
 |---|---|---|
