@@ -1,17 +1,21 @@
-# Google Scholar Scraper — Rust (v4.0.0)
+# Google Scholar Scraper — Rust (v4.0.2)
 
 Native Rust rewrite of the Python desktop app (`../src`, frozen at v2.2.2 as the
-behavioral oracle). Same core logic — Scholar scraping, PDF
-availability/download, Crossref enrichment, citations, ranking, dedupe, journal
+behavioral oracle). Same core logic — Scholar scraping, PDF availability and
+download, Crossref/OpenAlex enrichment, citations, ranking, dedupe, journal
 catalog, exports — with a Tauri v2 GUI (plain static `ui/`, no node).
 
 ## Layout
 
 | Crate | Role |
 |---|---|
-| `gss-core` | All logic: `client`, `parser`, `pdf`, `crossref`, `catalog`, `exporters`, `dedupe`, `ranking`, `models`, `text`, `url`. Contracts in `gss-core/docs/CONTRACTS.md`. |
+| `gss-core` | All logic. Contracts in `gss-core/docs/CONTRACTS.md`. |
 | `gss-app` | Tauri GUI shell + `--packaging-smoke` / `--selfcheck-layout` headless modes. |
 | `gss-parity` | JSON-dump harness driven by `tools/parity_check.py`. |
+
+`gss-core` modules: `client`, `parser`, `pdf`, `crossref`, `catalog`, `abstracts`,
+`cache`, `review`, `discovery`, `exporters`, `exports_extra`, `dedupe`, `ranking`,
+`models`, `text`, `url`.
 
 ## Build
 
@@ -29,47 +33,68 @@ Requirements: Rust `stable-x86_64-pc-windows-gnu` + mingw-w64 binutils/gcc
 ## Tests
 
 ```bat
-tools\build.cmd test --workspace        :: 25 + 262 tests
+tools\build.cmd test --workspace              :: 345 tests, 12 suites
 tools\build.cmd clippy --workspace -- -D warnings
 tools\build.cmd fmt --all --check
+python tools\parity_check.py --python .. --rust .   :: 4 gates (1,2,4,5), zero-diff
 ```
 
-## GUI (v3.1.0)
+## GUI
 
-The window is a plain static page (`gss-app/ui/`) over Tauri IPC. Beyond the
-search table it carries: a `File → Export citations…` entry with `Ctrl+E`;
-click-to-sort column headers (`▲`/`▼`); `Ctrl+A` to select every visible row; a
-session-only `Filter results…` box beside the PDF filter; an `Open folder`
-button after an export; a row context menu (open link, reveal the downloaded PDF
-in Explorer, copy title, copy DOI, details); a progress bar that resets when an
-operation ends; error dialogs that dismiss with Escape; and settings
-(query, pages, folders, ranking file/year, year preset, PDF filter) persisted to
-`%APPDATA%\com.googlescholarscraper.app\ui-settings.json`.
+The window is a plain static page (`gss-app/ui/`) over Tauri IPC — 40 commands.
+Beyond the search table it carries:
 
-Cancelling, metadata enrichment, citation resolution, and rank application are
-all live against the network — nothing is a stub.
+- **Search** — year preset, pages, ranking file/year, output folder; a progress
+  bar that resets when an operation ends; `Retry search` after a transport failure;
+  results kept on screen when a re-search fails.
+- **Table** — click-to-sort headers (`▲`/`▼`, `aria-sort` maintained), keyboard
+  grid navigation (arrows, `Space`, `Shift`+arrow, `Home`/`End`, `Enter`),
+  `Ctrl+A` select-all, `Ctrl+Shift+A` clear, selection count in the summary,
+  ellipsis truncation with full-text tooltips, column visibility, compact row
+  density, dark/light/system theme, and a column legend.
+- **Filters** — text query, PDF state, screening decision, tag; a collapsible
+  Filters panel; Clear filters; named saved filter expressions.
+- **Records** — row context menu (open link, reveal downloaded PDF, copy title,
+  copy DOI, details), details dialog with the same actions, clickable PDF/link
+  cells, abstracts on demand, and a bounded metadata-only refresh.
+- **Per-record state** — in/out/maybe decisions with reasons, notes, and tags,
+  applied individually or in bulk across a selection.
+- **Persistence** — settings in `%APPDATA%\com.googlescholarscraper.app\ui-settings.json`
+  (query, pages, folders, ranking, year preset, PDF/decision/tag filters, saved
+  filters, theme, sort order, density, hidden columns, query history, window
+  geometry); results restored across launches from `last-results.json`.
 
-### v3.3.0 additions
+## Review workflow
 
-**Abstracts on demand** (`gss-core/src/abstracts.rs`): Crossref JATS is flattened
-to text and OpenAlex's `abstract_inverted_index` is reconstructed, exposed through
-`fetch_abstract` and shown in an in-app dialog from the row context menu or the
-details dialog. Records without a DOI fall back to an OpenAlex title search that
-only accepts a normalized-title match.
+`gss-core/src/review.rs` holds the systematic-review container:
 
-**Journal indexing column**: `catalog::indexing_labels` derives `SJR Q1`,
-`SINTA S2`, `SCOPUS`, or `DOAJ` badges from the imported catalog and source
-markers; the local relevance score remains the default sort but is no longer a
-column. Empty means unknown, never unranked.
+- Decisions, notes, and tags keyed by `record_key` — DOI when present, else a
+  normalized title — so screening survives re-search, re-sort, and append.
+- PRISMA counts from live state, and a screening-log CSV with decisions and
+  timestamps.
+- Near-duplicate report, named baselines with search-diff against a later run.
+- Append mode, re-score of stored results, and round-trip import of the app's own
+  CSV/JSON export.
 
-See `docs/CAPABILITY-BACKLOG.md` for the reviewed backlog of further work.
+## Exports
 
-Carried from 3.2.0: keyboard grid navigation, selection counts, export scope
-(visible/selected), retry after failure, collapsible Filters panel, results
-restored across launches (`last-results.json`), clickable PDF/link cells, query
-history, column visibility, compact density, and details-dialog actions. Settings
-for sort order, density, hidden columns, and query history persist in
-`ui-settings.json`.
+| Format | Path |
+|---|---|
+| CSV, BibTeX, RIS | Byte-identical to the Python oracle (parity gate 4). Do not edit. |
+| Excel, JSON, Markdown, TSV, ENW, CSL-JSON, details, reading list | `exports_extra.rs` |
+
+`exports_extra.rs` exists precisely so new formats never perturb the gated
+writers. Excel adds freeze panes, autofilter, hyperlinks, and grouped sheets.
+Citations render as APA, IEEE, Vancouver, or CSL-JSON, with stable BibTeX keys.
+Excel and CSV writes are atomic (`.tmp` + rename).
+
+## Discovery
+
+`gss-core/src/discovery.rs` creates result sets from sources other than a keyword
+search: paste DOIs (bare, `doi:`, or `https://doi.org/…` forms, resolved through
+Crossref) and citation chasing both directions through OpenAlex — works citing a
+DOI, or works it cites. Additions merge into the current set and persist, so they
+screen and export like any other record.
 
 ## Parity vs the Python oracle
 
@@ -77,21 +102,48 @@ for sort order, density, hidden columns, and query history persist in
 python tools\parity_check.py --python ..\src --rust .
 ```
 
-Gates (all must be zero-diff):
-1. `normalize_title_key` over fixtures + adversarial edge cases.
-2. `parse_scholar_page` over all 9 HTML fixtures + a 429.
-3. CSV/BibTeX/RIS byte-equality on a fixed record set.
-4. Full offline `scrape_scholar` extraction over scripted multi-page jobs.
+Gates (all must be zero-diff). Numbering is historic — there is no gate 3; the
+export comparison it once covered lives inside gate 4:
 
-The Python suite (`../src/tests`, 368 tests) remains the behavioral oracle;
-the Rust port mirrors it 1:1 per module.
+1. `normalize_title_key` over fixtures + adversarial edge cases.
+2. `parse_scholar_page` over the HTML fixtures + a 429.
+4. CSV/BibTeX/RIS byte-equality on a fixed record set.
+5. Scholar extraction including `fetch_with_retries` behaviour.
+
+The Python suite (`../src/tests`, 368 tests) remains the behavioral oracle; the
+Rust port mirrors it per module. Two roadmap items were refused rather than
+implemented because they contradict it: fuzzy title matching (4.7, reverted) and
+a change to the PDF-availability failure state (6.12, already correct).
 
 ## Packaging
 
-`cargo build --release` → `target/release/gss-app.exe` (~14.6 MB, cold start
-<500 ms). `--packaging-smoke DIR` writes `packaging-smoke.xlsx`/`.csv` with the
-exact 20-column export contract; CI (`​.github/workflows/rust.yml`) runs tests,
-clippy, fmt, the smoke check, and attaches the exe + `SHA256SUMS.txt` on `v3.*`
-tags.
+`cargo build --release` → `target/release/gss-app.exe` (15.4 MiB locally; the
+CI-built asset is 17.6 MiB). Measured startup on this workstation: 2.07 s on the
+first launch after boot, ~0.03 s warm.
+
+`--packaging-smoke DIR` writes `packaging-smoke.xlsx`/`.csv` against the frozen
+20-column export contract.
+
+CI (`.github/workflows/rust.yml`) runs tests, clippy, fmt, and the smoke check on
+`rust/**` changes, then on any `v[0-9]+.*` tag builds the NSIS installer with
+`cargo tauri build --bundles nsis` and attaches the installer, the portable exe,
+and `SHA256SUMS.txt` to the release.
+
+## Releases
+
+| Tag | Content |
+|---|---|
+| v3.3.1 | Logging, typed command errors, Crossref failure counting, catalog and settings persistence, DOI cache |
+| v3.4.0 | 14 metadata fields, ORCID/retraction/funder parsing, OA metadata, year histogram, gap report, journal trend |
+| v3.5.0 | Extra export formats, rich Excel, CSL-JSON, stable BibTeX keys, citation styles |
+| v3.6.0 | Review state: decisions, notes, tags, PRISMA, screening log, baselines, near-duplicates |
+| v3.7.0 | Interface polish; atomic Excel/CSV export |
+| v3.8.0 | Window geometry persistence; CI builds the installer |
+| v4.0.0 | Discovery: paste DOIs, citation chasing |
+| v4.0.1 | Decision/tag filters, saved filter expressions |
+| v4.0.2 | Fix discovery data loss and stale titles |
+
+See `docs/ROADMAP.md` for per-phase delivery status. P0–P3 are complete; P4–P7 are
+partial, with the open items listed per phase.
 
 <!-- ci-trigger: rust workflow watches rust/** -->
